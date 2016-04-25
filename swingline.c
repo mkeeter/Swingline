@@ -80,6 +80,28 @@ const char* sum_frag_src = GLSL(
     }
 );
 
+const char* feedback_src = GLSL(
+    layout (location=0) in uint index;
+    out vec2 pos;
+
+    uniform sampler2D summed;
+    void main()
+    {
+        ivec2 tex_size = textureSize(summed, 0);
+        pos = vec2(0.0f, 0.0f);
+        vec2 divisor = vec2(0.0f, 0.0f);
+        for (int y=0; y < tex_size.y; ++y)
+        {
+            vec4 t = texelFetch(summed, ivec2(index, y), 0);
+            pos += t.xy;
+            divisor += t.zw;
+        }
+        pos /= divisor;
+        pos = vec2(1.0f, 3.5);
+    }
+);
+
+
 const char* blit_frag_src = GLSL(
     layout (location=0) out vec4 color;
     layout (pixel_center_integer) in vec4 gl_FragCoord;
@@ -95,14 +117,8 @@ const char* blit_frag_src = GLSL(
 
 /******************************************************************************/
 
-GLuint build_shader(GLenum type, const GLchar* src)
+void check_shader(GLuint shader)
 {
-    assert(type == GL_VERTEX_SHADER || type == GL_FRAGMENT_SHADER);
-
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &src, NULL);
-    glCompileShader(shader);
-
     GLint status;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
     if (status == GL_FALSE)
@@ -115,17 +131,22 @@ GLuint build_shader(GLenum type, const GLchar* src)
         fprintf(stderr, "Error: shader failed with error '%s'\n", info_log);
         exit(-1);
     }
+}
 
+GLuint build_shader(GLenum type, const GLchar* src)
+{
+    assert(type == GL_VERTEX_SHADER || type == GL_FRAGMENT_SHADER);
+
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &src, NULL);
+    glCompileShader(shader);
+
+    check_shader(shader);
     return shader;
 }
 
-GLuint build_program(GLuint vert, GLuint frag)
+void check_program(GLuint program)
 {
-    GLuint program = glCreateProgram();
-    glAttachShader(program, vert);
-    glAttachShader(program, frag);
-    glLinkProgram(program);
-
     GLint status;
     glGetProgramiv(program, GL_LINK_STATUS, &status);
     if (status == GL_FALSE)
@@ -138,7 +159,16 @@ GLuint build_program(GLuint vert, GLuint frag)
         fprintf(stderr, "Error: linking failed with error '%s'\n", info_log);
         exit(-1);
     }
+}
 
+GLuint build_program(GLuint vert, GLuint frag)
+{
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vert);
+    glAttachShader(program, frag);
+    glLinkProgram(program);
+
+    check_program(program);
     return program;
 }
 
@@ -223,10 +253,38 @@ GLuint build_quad()
     glBindVertexArray(vao);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
     glBindVertexArray(0);
+    return vao;
+}
+
+/******************************************************************************/
+
+GLuint build_feedback(size_t point_count)
+{
+    GLuint vao;
+    GLuint vbo;
+    size_t bytes = sizeof(GLuint) * point_count;
+    GLuint* indices = (GLuint*)malloc(bytes);
+
+    for (size_t i=0; i < point_count; ++i)
+    {
+        indices[i] = i;
+    }
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, bytes, indices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 1, GL_UNSIGNED_INT, GL_FALSE, 0, 0);
+    glBindVertexArray(0);
+
+    free(indices);
+
     return vao;
 }
 
@@ -316,22 +374,6 @@ void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
                 glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
             glBindVertexArray(0);
         glUseProgram(0);
-
-    {
-        uint8_t* out = (uint8_t*)malloc(sizeof(uint8_t) * 10 * 10 * 3);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, 10, 10, GL_RGB, GL_UNSIGNED_BYTE, out);
-        int q=0;
-        for (int j=0; j < 10; ++j)
-        {
-            for (int i=0; i < 10; ++i)
-            {
-                printf("%i \t", out[q]);
-                q += 3;
-            }
-            printf("\n");
-        }
-    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -355,22 +397,36 @@ void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
                 glBindVertexArray(0);
             glUseProgram(0);
         glPopAttrib();
-
-        {
-            float* out = (float*)malloc(sizeof(float) * height * point_count * 4);
-            glReadPixels(0, 0, point_count, height, GL_RGBA, GL_FLOAT, out);
-            int q=0;
-            for (int j=0; j < height; ++j)
-            {
-                for (int i=0; i < point_count; ++i)
-                {
-                    printf("%.2f %.2f %.2f %.2f\t", out[q], out[q+1], out[q+2], out[q+3]);
-                    q += 4;
-                }
-                printf("\n");
-            }
-        }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void render_feedback(GLuint vao, GLuint vbo, GLuint tex,
+                     GLuint program, size_t point_count)
+{
+    glEnable(GL_RASTERIZER_DISCARD);
+    glBindVertexArray(vao);
+        glUseProgram(program);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glUniform1i(glGetUniformLocation(program, "tex"), 0);
+            glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, vbo);
+            glBeginTransformFeedback(GL_POINTS);
+                glDrawArrays(GL_POINTS, 0, point_count);
+            glEndTransformFeedback();
+        glUseProgram(0);
+    glBindVertexArray(0);
+    glDisable(GL_RASTERIZER_DISCARD);
+    glFlush();
+
+    {
+        GLfloat feedback[point_count*2];
+        glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, sizeof(feedback), feedback);
+        for (unsigned i=0; i < point_count*2; i += 2)
+        {
+            printf("%f %f\n", feedback[i], feedback[i+1]);
+        }
+    }
 }
 
 /******************************************************************************/
@@ -381,7 +437,7 @@ int main(int argc, char** argv)
     (void)argv;
 
     static const size_t cone_res = 64;
-    static const size_t point_count = 2;
+    static const size_t point_count = 10;
     static const size_t width = 10;
     static const size_t height = 10;
 
@@ -394,7 +450,7 @@ int main(int argc, char** argv)
 
     glBindVertexArray(voronoi_vao);
         build_cone(cone_res);           /* Uses bound VAO   */
-        build_instances(point_count);   /* (same)           */
+        GLuint voronoi_vbo = build_instances(point_count);   /* (same) */
     glBindVertexArray(0);
 
     GLuint voronoi_program = build_program(
@@ -423,7 +479,7 @@ int main(int argc, char** argv)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     /*************************************************************************/
-    /*  Build everything needed for the transform feedback stage             */
+    /*  Build everything needed for the summing stage                        */
     GLuint quad_vao = build_quad();
 
     GLuint sum_tex = new_texture();
@@ -445,11 +501,23 @@ int main(int argc, char** argv)
         build_shader(GL_FRAGMENT_SHADER, sum_frag_src));
 
     /*************************************************************************/
+    /*  Build everything needed for the transform feedback stage             */
+    GLuint feedback_shader = build_shader(GL_VERTEX_SHADER, feedback_src);
+    GLuint feedback_program = glCreateProgram();
+    GLuint feedback_vao = build_feedback(point_count);
+    glAttachShader(feedback_program, feedback_shader);
+    const GLchar* feedback_varying[] = { "pos" };
+    glTransformFeedbackVaryings(feedback_program, 1, feedback_varying,
+                                GL_INTERLEAVED_ATTRIBS);
+    glLinkProgram(feedback_program);
+    check_program(feedback_program);
+    /*************************************************************************/
 
     render_voronoi(voronoi_program, voronoi_fbo, voronoi_vao,
                    cone_res, point_count);
     render_sum(sum_program, sum_fbo, quad_vao, voronoi_tex,
                point_count, height);
+    render_feedback(feedback_vao, voronoi_vbo, sum_tex, feedback_program, point_count);
 
     /*************************************************************************/
 
