@@ -39,6 +39,30 @@ const char* voronoi_frag_src = GLSL(
 
 /******************************************************************************/
 
+const char* quad_vert_src = GLSL(
+    layout(location=0) in vec2 pos;
+
+    void main()
+    {
+        gl_Position = vec4(pos, 0.0f, 1.0f);
+    }
+);
+
+const char* blit_frag_src = GLSL(
+    layout (location=0) out vec4 color;
+    layout (pixel_center_integer) in vec4 gl_FragCoord;
+
+    uniform sampler2D tex;
+
+    void main()
+    {
+        vec4 t = texelFetch(tex, ivec2(gl_FragCoord.x, gl_FragCoord.y), 0);
+        color = vec4(t.xyz, 1.0f);
+    }
+);
+
+/******************************************************************************/
+
 GLuint build_shader(GLenum type, const GLchar* src)
 {
     assert(type == GL_VERTEX_SHADER || type == GL_FRAGMENT_SHADER);
@@ -59,6 +83,7 @@ GLuint build_shader(GLenum type, const GLchar* src)
         fprintf(stderr, "Error: shader failed with error '%s'\n", info_log);
         exit(-1);
     }
+
     return shader;
 }
 
@@ -81,6 +106,7 @@ GLuint build_program(GLuint vert, GLuint frag)
         fprintf(stderr, "Error: linking failed with error '%s'\n", info_log);
         exit(-1);
     }
+
     return program;
 }
 
@@ -93,6 +119,7 @@ GLuint build_program(GLuint vert, GLuint frag)
  */
 void build_cone(size_t n)
 {
+    GLuint vbo;
     size_t bytes = (n + 2) * 3 * sizeof(float);
     float* buf = (float*)malloc(bytes);
 
@@ -109,8 +136,6 @@ void build_cone(size_t n)
         buf[i*3 + 5] = 1;
     }
 
-    GLuint vbo;
-
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_STATIC_DRAW);
@@ -126,6 +151,7 @@ void build_cone(size_t n)
  */
 GLuint build_instances(size_t n)
 {
+    GLuint vbo;
     size_t bytes = n * 2 * sizeof(float);
     float* buf = (float*)malloc(bytes);
 
@@ -135,8 +161,6 @@ GLuint build_instances(size_t n)
         buf[i] = ((float)rand() / RAND_MAX - 0.5) * 2;
     }
 
-    GLuint vbo;
-
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_STATIC_DRAW);
@@ -145,7 +169,33 @@ GLuint build_instances(size_t n)
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
     glVertexAttribDivisor(1, 1);
 
+    free(buf);
     return vbo;
+}
+
+/******************************************************************************/
+
+/*
+ *  Builds a quad covering the viewport, returning the relevant VAO
+ */
+GLuint build_quad()
+{
+    GLfloat verts[] = {-1.0f, -1.0f,     1.0f, -1.0f,
+                        1.0f,  1.0f,    -1.0f,  1.0f};
+    GLuint vbo;
+    GLuint vao;
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glBindVertexArray(0);
+    return vao;
 }
 
 /******************************************************************************/
@@ -154,7 +204,7 @@ GLuint build_instances(size_t n)
  *  Creates an OpenGL context (3.3 or higher)
  *  Returns a window pointer; the context is made current
  */
-GLFWwindow* make_context()
+GLFWwindow* make_context(size_t width, size_t height)
 {
     if (!glfwInit())
     {
@@ -167,7 +217,8 @@ GLFWwindow* make_context()
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* const window = glfwCreateWindow(800, 800, "swingline", NULL, NULL);
+    GLFWwindow* const window = glfwCreateWindow(
+            width, height, "swingline", NULL, NULL);
 
     if (!window)
     {
@@ -190,60 +241,127 @@ GLFWwindow* make_context()
     return window;
 }
 
-////////////////////////////////////////////////////////////////////////////////
+/******************************************************************************/
 
-/*
-    {   // Generate a full-screen quad for texture rendering
-        GLfloat verts[] = {-1.0f, -1.0f,     1.0f, -1.0f,
-                            1.0f,  1.0f,    -1.0f,  1.0f};
-        glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(verts),
-                     verts, GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
-                              2 * sizeof(GLfloat), (GLvoid*)0);
-        glEnableVertexAttribArray(0);
-        glBindVertexArray(0);
-    }
-*/
+GLuint new_texture()
+{
+    GLuint tex;
+    glGenTextures(1, &tex);
+
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+
+    return tex;
+}
+
+/******************************************************************************/
+
+void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
+                    size_t cone_res, size_t point_count)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glEnable(GL_DEPTH_TEST);
+        glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
+        glClearDepth(1.0f);
+        glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(program);
+            glBindVertexArray(vao);
+                glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
+            glBindVertexArray(0);
+        glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+/******************************************************************************/
 
 int main(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
 
-    GLFWwindow* win = make_context();
-    if (!win)
-    {
-        return -1;
-    }
-
     static const size_t cone_res = 64;
     static const size_t point_count = 100;
+    static const size_t width = 400;
+    static const size_t height = 400;
 
-    GLuint cone_vao;
-    glGenVertexArrays(1, &cone_vao);
-    glBindVertexArray(cone_vao);
-    build_cone(cone_res);
-    build_instances(point_count);
+    GLFWwindow* win = make_context(width, height);
+
+    /*************************************************************************/
+    /*  Generate all of the parts used in the voronoi rendering step         */
+    GLuint voronoi_vao;
+    glGenVertexArrays(1, &voronoi_vao);
+
+    glBindVertexArray(voronoi_vao);
+        build_cone(cone_res);           /* Uses bound VAO   */
+        build_instances(point_count);   /* (same)           */
     glBindVertexArray(0);
 
     GLuint voronoi_program = build_program(
         build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
         build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
 
-    glUseProgram(voronoi_program);
+    GLuint voronoi_fbo;
+    glGenFramebuffers(1, &voronoi_fbo);
+    GLuint voronoi_tex = new_texture();
+    GLuint voronoi_depth = new_texture();
+
+    glBindTexture(GL_TEXTURE_2D, voronoi_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
+                     0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+    glBindTexture(GL_TEXTURE_2D, voronoi_depth);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height,
+                     0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &voronoi_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, voronoi_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, voronoi_tex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, voronoi_depth, 0);
+        {   /*  Check to see if the framebuffer is complete  */
+            int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            if (status != GL_FRAMEBUFFER_COMPLETE)
+            {
+                fprintf(stderr, "Error: framebuffer is incomplete (%i)\n",
+                        status);
+                exit(-1);
+            }
+        }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    /*************************************************************************/
+    /*  Build everything needed for the transform feedback stage             */
+    GLuint blit_program = build_program(
+        build_shader(GL_VERTEX_SHADER, quad_vert_src),
+        build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
+    GLuint quad_vao = build_quad();
+
+    /*************************************************************************/
+
+    render_voronoi(voronoi_program, voronoi_fbo, voronoi_vao,
+                   cone_res, point_count);
+
+    /*************************************************************************/
+
+    glUseProgram(blit_program);
+    glBindVertexArray(quad_vao);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, voronoi_tex);
+    glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClearDepth(1.0f);
-    glEnable(GL_DEPTH_TEST);
 
     while (!glfwWindowShouldClose(win))
     {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glUseProgram(voronoi_program);
-        glBindVertexArray(cone_vao);
-        glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
         // Swap front and back buffers
         glfwSwapBuffers(win);
@@ -252,6 +370,5 @@ int main(int argc, char** argv)
         glfwPollEvents();
     }
 
-    glfwTerminate();
     return 0;
 }
