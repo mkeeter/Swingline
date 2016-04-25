@@ -10,14 +10,14 @@
 
 #define GLSL(src) "#version 330 core\n" #src
 const char* voronoi_vert_src = GLSL(
-    layout(location=0) in vec3 pos;
-    layout(location=1) in vec2 offset;
+    layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
+    layout(location=1) in vec2 offset;  /*  0 to 1 */
 
     out vec3 color_;
 
     void main()
     {
-        gl_Position = vec4(pos.xy + offset, pos.z, 1.0f);
+        gl_Position = vec4(pos.xy + 2.0f*offset - 1.0f, pos.z, 1.0f);
 
         // Pick color based on instance ID
         int r = gl_InstanceID           % 256;
@@ -41,10 +41,25 @@ const char* voronoi_frag_src = GLSL(
 
 const char* quad_vert_src = GLSL(
     layout(location=0) in vec2 pos;
+    out vec2 pos_;
 
     void main()
     {
         gl_Position = vec4(pos, 0.0f, 1.0f);
+        pos_ = vec2((pos + 1.0f) / 2.0f);
+    }
+);
+
+const char* blit_frag_src = GLSL(
+    layout (location=0) out vec4 color;
+    in vec2 pos_;  /* 0 to 1 range */
+
+    uniform sampler2D tex;
+
+    void main()
+    {
+        vec4 t = texture(tex, pos_);
+        color = vec4(t.xyz, 1.0f);
     }
 );
 
@@ -77,6 +92,10 @@ const char* sum_frag_src = GLSL(
                 color.w += wy;
             }
         }
+
+        // Normalize to the 0 - 1 range
+        color.x /= (tex_size.x - 1);
+        color.y /= (tex_size.y - 1);
     }
 );
 
@@ -96,22 +115,14 @@ const char* feedback_src = GLSL(
             pos += t.xy;
             divisor += t.zw;
         }
-        pos /= divisor;
-        pos = vec2(1.0f, 3.5);
-    }
-);
-
-
-const char* blit_frag_src = GLSL(
-    layout (location=0) out vec4 color;
-    layout (pixel_center_integer) in vec4 gl_FragCoord;
-
-    uniform sampler2D tex;
-
-    void main()
-    {
-        vec4 t = texelFetch(tex, ivec2(gl_FragCoord.x, gl_FragCoord.y), 0);
-        color = vec4(t.xyz, 1.0f);
+        if (divisor.x != 0)
+        {
+            pos.x /= divisor.x;
+        }
+        if (divisor.y != 0)
+        {
+            pos.y /= divisor.y;
+        }
     }
 );
 
@@ -220,12 +231,12 @@ GLuint build_instances(size_t n)
     /*  Fill the buffer with random numbers between -1 and 1 */
     for (size_t i=0; i < 2*n; ++i)
     {
-        buf[i] = ((float)rand() / RAND_MAX - 0.5) * 2;
+        buf[i] = (float)rand() / RAND_MAX;
     }
 
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_DYNAMIC_DRAW);
 
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
@@ -361,11 +372,17 @@ void check_fbo(const char* description)
 }
 
 void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
-                    size_t cone_res, size_t point_count)
+                    size_t cone_res, size_t point_count,
+                    size_t width, size_t height)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        GLint viewport[4];
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        glViewport(0, 0, width, height);
+
         glEnable(GL_DEPTH_TEST);
-        glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
+        glClearColor(0.0f, 1.0f, 1.0f, 1.0f);
         glClearDepth(1.0f);
         glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 
@@ -374,6 +391,7 @@ void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
                 glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
             glBindVertexArray(0);
         glUseProgram(0);
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -382,8 +400,10 @@ void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
-        glPushAttrib(GL_VIEWPORT_BIT);
-            glViewport(0, 0, point_count, height);
+        // Save viewport size and restore it later
+        GLint viewport[4];
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        glViewport(0, 0, point_count, height);
 
             glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
@@ -396,7 +416,7 @@ void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
                     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
                 glBindVertexArray(0);
             glUseProgram(0);
-        glPopAttrib();
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -417,16 +437,6 @@ void render_feedback(GLuint vao, GLuint vbo, GLuint tex,
         glUseProgram(0);
     glBindVertexArray(0);
     glDisable(GL_RASTERIZER_DISCARD);
-    glFlush();
-
-    {
-        GLfloat feedback[point_count*2];
-        glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, sizeof(feedback), feedback);
-        for (unsigned i=0; i < point_count*2; i += 2)
-        {
-            printf("%f %f\n", feedback[i], feedback[i+1]);
-        }
-    }
 }
 
 /******************************************************************************/
@@ -437,9 +447,9 @@ int main(int argc, char** argv)
     (void)argv;
 
     static const size_t cone_res = 64;
-    static const size_t point_count = 10;
-    static const size_t width = 10;
-    static const size_t height = 10;
+    static const size_t point_count = 100;
+    static const size_t width = 500;
+    static const size_t height = 500;
 
     GLFWwindow* win = make_context(width, height);
 
@@ -511,28 +521,32 @@ int main(int argc, char** argv)
                                 GL_INTERLEAVED_ATTRIBS);
     glLinkProgram(feedback_program);
     check_program(feedback_program);
-    /*************************************************************************/
-
-    render_voronoi(voronoi_program, voronoi_fbo, voronoi_vao,
-                   cone_res, point_count);
-    render_sum(sum_program, sum_fbo, quad_vao, voronoi_tex,
-               point_count, height);
-    render_feedback(feedback_vao, voronoi_vbo, sum_tex, feedback_program, point_count);
 
     /*************************************************************************/
+    GLuint blit_program = build_program(
+        build_shader(GL_VERTEX_SHADER, quad_vert_src),
+        build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
 
-    glUseProgram(sum_program);
-    glBindVertexArray(quad_vao);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, voronoi_tex);
-    glUniform1i(glGetUniformLocation(sum_program, "tex"), 0);
-
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-    glClearDepth(1.0f);
 
     while (!glfwWindowShouldClose(win))
     {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        render_voronoi(voronoi_program, voronoi_fbo, voronoi_vao,
+                       cone_res, point_count, width, height);
+        render_sum(sum_program, sum_fbo, quad_vao, voronoi_tex,
+                   point_count, height);
+        render_feedback(feedback_vao, voronoi_vbo, sum_tex,
+                        feedback_program, point_count);
+
+        // Then draw the quad
+        glBindVertexArray(quad_vao);
+        glUseProgram(blit_program);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, voronoi_tex);
+        glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
+
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glDisable(GL_DEPTH_TEST);
+        glClear(GL_COLOR_BUFFER_BIT);
 
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
