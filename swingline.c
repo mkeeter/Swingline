@@ -48,6 +48,38 @@ const char* quad_vert_src = GLSL(
     }
 );
 
+const char* sum_frag_src = GLSL(
+    layout (location=0) out vec4 color;
+    layout (pixel_center_integer) in vec4 gl_FragCoord;
+
+    uniform sampler2D voronoi;
+
+    void main()
+    {
+        int my_index = int(gl_FragCoord.x);
+        ivec2 tex_size = textureSize(voronoi, 0);
+        color = vec4(0.0f);
+
+        // Iterate over all columns of the source image, accumulating a
+        // weighted sum of the pixels that match our index
+        for (int x=0; x < tex_size.x; x++)
+        {
+            vec4 t = texelFetch(voronoi, ivec2(x, gl_FragCoord.y), 0);
+            int i = int(255.0f * (t.r + (t.g * 255.0f) + (t.b * 65535.0f)));
+            if (i == my_index)
+            {
+                float wx = 1.0f; // Replace these with weights later
+                float wy = 1.0f;
+
+                color.x += x * wx;
+                color.y += gl_FragCoord.y * wy;
+                color.z += wx;
+                color.w += wy;
+            }
+        }
+    }
+);
+
 const char* blit_frag_src = GLSL(
     layout (location=0) out vec4 color;
     layout (pixel_center_integer) in vec4 gl_FragCoord;
@@ -259,6 +291,17 @@ GLuint new_texture()
 
 /******************************************************************************/
 
+void check_fbo(const char* description)
+{   /*  Check to see if the framebuffer is complete  */
+    int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE)
+    {
+        fprintf(stderr, "Error: %s framebuffer is incomplete (%i)\n",
+                description, status);
+        exit(-1);
+    }
+}
+
 void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
                     size_t cone_res, size_t point_count)
 {
@@ -273,6 +316,60 @@ void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
                 glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
             glBindVertexArray(0);
         glUseProgram(0);
+
+    {
+        uint8_t* out = (uint8_t*)malloc(sizeof(uint8_t) * 10 * 10 * 3);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, 10, 10, GL_RGB, GL_UNSIGNED_BYTE, out);
+        int q=0;
+        for (int j=0; j < 10; ++j)
+        {
+            for (int i=0; i < 10; ++i)
+            {
+                printf("%i \t", out[q]);
+                q += 3;
+            }
+            printf("\n");
+        }
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
+                size_t point_count, size_t height)
+{
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+
+        glPushAttrib(GL_VIEWPORT_BIT);
+            glViewport(0, 0, point_count, height);
+
+            glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            glUseProgram(program);
+                glBindVertexArray(vao);
+                    glActiveTexture(GL_TEXTURE0);
+                    glBindTexture(GL_TEXTURE_2D, tex);
+                    glUniform1i(glGetUniformLocation(program, "tex"), 0);
+                    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+                glBindVertexArray(0);
+            glUseProgram(0);
+        glPopAttrib();
+
+        {
+            float* out = (float*)malloc(sizeof(float) * height * point_count * 4);
+            glReadPixels(0, 0, point_count, height, GL_RGBA, GL_FLOAT, out);
+            int q=0;
+            for (int j=0; j < height; ++j)
+            {
+                for (int i=0; i < point_count; ++i)
+                {
+                    printf("%.2f %.2f %.2f %.2f\t", out[q], out[q+1], out[q+2], out[q+3]);
+                    q += 4;
+                }
+                printf("\n");
+            }
+        }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -284,9 +381,9 @@ int main(int argc, char** argv)
     (void)argv;
 
     static const size_t cone_res = 64;
-    static const size_t point_count = 100;
-    static const size_t width = 400;
-    static const size_t height = 400;
+    static const size_t point_count = 2;
+    static const size_t width = 10;
+    static const size_t height = 10;
 
     GLFWwindow* win = make_context(width, height);
 
@@ -304,8 +401,6 @@ int main(int argc, char** argv)
         build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
         build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
 
-    GLuint voronoi_fbo;
-    glGenFramebuffers(1, &voronoi_fbo);
     GLuint voronoi_tex = new_texture();
     GLuint voronoi_depth = new_texture();
 
@@ -317,42 +412,52 @@ int main(int argc, char** argv)
                      0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    GLuint voronoi_fbo;
     glGenFramebuffers(1, &voronoi_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, voronoi_fbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                GL_TEXTURE_2D, voronoi_tex, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                                GL_TEXTURE_2D, voronoi_depth, 0);
-        {   /*  Check to see if the framebuffer is complete  */
-            int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-            if (status != GL_FRAMEBUFFER_COMPLETE)
-            {
-                fprintf(stderr, "Error: framebuffer is incomplete (%i)\n",
-                        status);
-                exit(-1);
-            }
-        }
+    check_fbo("voronoi");
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     /*************************************************************************/
     /*  Build everything needed for the transform feedback stage             */
-    GLuint blit_program = build_program(
-        build_shader(GL_VERTEX_SHADER, quad_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
     GLuint quad_vao = build_quad();
+
+    GLuint sum_tex = new_texture();
+    glBindTexture(GL_TEXTURE_2D, sum_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, point_count, height,
+                     0, GL_RGB, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    GLuint sum_fbo;
+    glGenFramebuffers(1, &sum_fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, sum_fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, sum_tex, 0);
+    check_fbo("sum");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    GLuint sum_program = build_program(
+        build_shader(GL_VERTEX_SHADER, quad_vert_src),
+        build_shader(GL_FRAGMENT_SHADER, sum_frag_src));
 
     /*************************************************************************/
 
     render_voronoi(voronoi_program, voronoi_fbo, voronoi_vao,
                    cone_res, point_count);
+    render_sum(sum_program, sum_fbo, quad_vao, voronoi_tex,
+               point_count, height);
 
     /*************************************************************************/
 
-    glUseProgram(blit_program);
+    glUseProgram(sum_program);
     glBindVertexArray(quad_vao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, voronoi_tex);
-    glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
+    glUniform1i(glGetUniformLocation(sum_program, "tex"), 0);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClearDepth(1.0f);
