@@ -280,7 +280,7 @@ GLuint build_feedback(size_t point_count)
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, bytes, indices, GL_STATIC_DRAW);
         glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 1, GL_UNSIGNED_INT, GL_FALSE, 0, 0);
+        glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 0, 0);
     glBindVertexArray(0);
 
     free(indices);
