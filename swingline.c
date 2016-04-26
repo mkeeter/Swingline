@@ -462,6 +462,39 @@ void voronoi_draw(Config* cfg, Voronoi* v)
     teardown(viewport);
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+typedef struct Sum_
+{
+    GLuint prog;
+    GLuint fbo;
+    GLuint tex;
+    GLuint vao;
+} Sum;
+
+Sum* sum_new(Config* config)
+{
+    Sum* sum = (Sum*)calloc(1, sizeof(Sum));
+    sum->vao = build_quad();
+    sum->tex = new_texture();
+    glBindTexture(GL_TEXTURE_2D, sum->tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, config->samples, config->height,
+                     0, GL_RGB, GL_FLOAT, 0);
+
+    glGenFramebuffers(1, &sum->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, sum->fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, sum->tex, 0);
+    check_fbo("sum");
+
+    sum->prog = build_program(
+        build_shader(GL_VERTEX_SHADER, quad_vert_src),
+        build_shader(GL_FRAGMENT_SHADER, sum_frag_src));
+
+    teardown(NULL);
+    return sum;
+}
+
 void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
                 size_t point_count, size_t height)
 {
@@ -524,23 +557,7 @@ int main(int argc, char** argv)
     /*  Build everything needed for the summing stage                        */
     GLuint quad_vao = build_quad();
 
-    GLuint sum_tex = new_texture();
-    glBindTexture(GL_TEXTURE_2D, sum_tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, config.samples, config.height,
-                     0, GL_RGB, GL_FLOAT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    GLuint sum_fbo;
-    glGenFramebuffers(1, &sum_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, sum_fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, sum_tex, 0);
-    check_fbo("sum");
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-    GLuint sum_program = build_program(
-        build_shader(GL_VERTEX_SHADER, quad_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, sum_frag_src));
+    Sum* s = sum_new(&config);
 
     /*************************************************************************/
     /*  Build everything needed for the transform feedback stage             */
@@ -563,9 +580,9 @@ int main(int argc, char** argv)
     while (!glfwWindowShouldClose(win))
     {
         voronoi_draw(&config, v);
-        render_sum(sum_program, sum_fbo, quad_vao, v->tex,
+        render_sum(s->prog, s->fbo, quad_vao, v->tex,
                    config.samples, config.height);
-        render_feedback(feedback_vao, v->pts, sum_tex,
+        render_feedback(feedback_vao, v->pts, s->tex,
                         feedback_program, config.samples);
 
         // Then draw the quad
