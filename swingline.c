@@ -384,6 +384,18 @@ void check_fbo(const char* description)
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+
+typedef struct Voronoi_ {
+    GLuint vao;     /*  VAO with bound cone and offsets */
+    GLuint pts;     /*  VBO containing point locations  */
+    GLuint prog;    /*  Shader program (compiled)       */
+
+    GLuint tex;     /*  RGB texture (bound to fbo)          */
+    GLuint depth;   /*  Depth texture (bound to fbo)        */
+    GLuint fbo;     /*  Framebuffer for render-to-texture   */
+} Voronoi;
+
 void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
                     size_t cone_res, size_t point_count,
                     size_t width, size_t height)
@@ -462,36 +474,35 @@ int main(int argc, char** argv)
 
     /*************************************************************************/
     /*  Generate all of the parts used in the voronoi rendering step         */
-    GLuint voronoi_vao;
-    glGenVertexArrays(1, &voronoi_vao);
+    Voronoi* v = (Voronoi*)calloc(1, sizeof(Voronoi));
+    glGenVertexArrays(1, &v->vao);
 
-    glBindVertexArray(voronoi_vao);
+    glBindVertexArray(v->vao);
         build_cone(cone_res);           /* Uses bound VAO   */
-        GLuint voronoi_vbo = build_instances(point_count);   /* (same) */
+        v->pts = build_instances(point_count);   /* (same) */
     glBindVertexArray(0);
 
-    GLuint voronoi_program = build_program(
+    v->prog = build_program(
         build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
         build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
 
-    GLuint voronoi_tex = new_texture();
-    GLuint voronoi_depth = new_texture();
+    v->tex= new_texture();
+    v->depth= new_texture();
 
-    glBindTexture(GL_TEXTURE_2D, voronoi_tex);
+    glBindTexture(GL_TEXTURE_2D, v->tex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
                      0, GL_RGB, GL_UNSIGNED_BYTE, 0);
-    glBindTexture(GL_TEXTURE_2D, voronoi_depth);
+    glBindTexture(GL_TEXTURE_2D, v->depth);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height,
                      0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    GLuint voronoi_fbo;
-    glGenFramebuffers(1, &voronoi_fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, voronoi_fbo);
+    glGenFramebuffers(1, &v->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, v->fbo);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, voronoi_tex, 0);
+                               GL_TEXTURE_2D, v->tex, 0);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                               GL_TEXTURE_2D, voronoi_depth, 0);
+                               GL_TEXTURE_2D, v->depth, 0);
     check_fbo("voronoi");
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -537,18 +548,18 @@ int main(int argc, char** argv)
 
     while (!glfwWindowShouldClose(win))
     {
-        render_voronoi(voronoi_program, voronoi_fbo, voronoi_vao,
+        render_voronoi(v->prog, v->fbo, v->vao,
                        cone_res, point_count, width, height);
-        render_sum(sum_program, sum_fbo, quad_vao, voronoi_tex,
+        render_sum(sum_program, sum_fbo, quad_vao, v->tex,
                    point_count, height);
-        render_feedback(feedback_vao, voronoi_vbo, sum_tex,
+        render_feedback(feedback_vao, v->pts, sum_tex,
                         feedback_program, point_count);
 
         // Then draw the quad
         glBindVertexArray(quad_vao);
         glUseProgram(blit_program);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, voronoi_tex);
+        glBindTexture(GL_TEXTURE_2D, v->tex);
         glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
