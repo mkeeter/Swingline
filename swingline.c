@@ -495,25 +495,24 @@ Sum* sum_new(Config* config)
     return sum;
 }
 
-void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
-                size_t point_count, size_t height)
+void sum_draw(Config* cfg, GLuint tex, Sum* s)
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
 
-        // Save viewport size and restore it later
-        GLint viewport[4];
-        glGetIntegerv(GL_VIEWPORT, viewport);
-        glViewport(0, 0, point_count, height);
+    // Save viewport size and restore it later
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glViewport(0, 0, cfg->samples, cfg->height);
 
-            glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
+    glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
-            glUseProgram(program);
-                glBindVertexArray(vao);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, tex);
-                    glUniform1i(glGetUniformLocation(program, "tex"), 0);
-                    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    glUseProgram(s->prog);
+    glBindVertexArray(s->vao);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glUniform1i(glGetUniformLocation(s->prog, "tex"), 0);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     teardown(viewport);
 }
 
@@ -580,8 +579,7 @@ int main(int argc, char** argv)
     while (!glfwWindowShouldClose(win))
     {
         voronoi_draw(&config, v);
-        render_sum(s->prog, s->fbo, quad_vao, v->tex,
-                   config.samples, config.height);
+        sum_draw(&config, v->tex, s);
         render_feedback(feedback_vao, v->pts, s->tex,
                         feedback_program, config.samples);
 
