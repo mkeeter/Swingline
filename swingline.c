@@ -423,23 +423,21 @@ Voronoi* voronoi_new(const Config* cfg)
     v->depth= new_texture();
 
     glBindTexture(GL_TEXTURE_2D, v->tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, cfg->width, cfg->height,
-                     0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, cfg->width, cfg->height,
+                 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
     glBindTexture(GL_TEXTURE_2D, v->depth);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
-                     cfg->width, cfg->height,
-                     0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, cfg->width, cfg->height,
+                 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
 
     glGenFramebuffers(1, &v->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, v->fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, v->tex, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                               GL_TEXTURE_2D, v->depth, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, v->tex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                           GL_TEXTURE_2D, v->depth, 0);
     check_fbo("voronoi");
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    teardown(NULL);
     return v;
 }
 
