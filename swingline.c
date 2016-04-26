@@ -183,6 +183,19 @@ GLuint build_program(GLuint vert, GLuint frag)
     return program;
 }
 
+void teardown(GLint* viewport)
+{
+    glBindVertexArray(0);
+    glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (viewport)
+    {
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    }
+}
+
 /******************************************************************************/
 
 /*
@@ -389,10 +402,8 @@ void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
         glUseProgram(program);
             glBindVertexArray(vao);
                 glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
-            glBindVertexArray(0);
-        glUseProgram(0);
-        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    teardown(viewport);
 }
 
 void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
@@ -414,10 +425,7 @@ void render_sum(GLuint program, GLuint fbo, GLuint vao, GLuint tex,
                     glBindTexture(GL_TEXTURE_2D, tex);
                     glUniform1i(glGetUniformLocation(program, "tex"), 0);
                     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-                glBindVertexArray(0);
-            glUseProgram(0);
-        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    teardown(viewport);
 }
 
 void render_feedback(GLuint vao, GLuint vbo, GLuint tex,
@@ -434,9 +442,8 @@ void render_feedback(GLuint vao, GLuint vbo, GLuint tex,
             glBeginTransformFeedback(GL_POINTS);
                 glDrawArrays(GL_POINTS, 0, point_count);
             glEndTransformFeedback();
-        glUseProgram(0);
-    glBindVertexArray(0);
     glDisable(GL_RASTERIZER_DISCARD);
+    teardown(NULL);
 }
 
 /******************************************************************************/
