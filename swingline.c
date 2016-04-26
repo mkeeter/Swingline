@@ -386,6 +386,15 @@ void check_fbo(const char* description)
 
 ////////////////////////////////////////////////////////////////////////////////
 
+typedef struct Config_ {
+    size_t width;
+    size_t height;
+    size_t samples;
+    size_t resolution;
+} Config;
+
+////////////////////////////////////////////////////////////////////////////////
+
 typedef struct Voronoi_ {
     GLuint vao;     /*  VAO with bound cone and offsets */
     GLuint pts;     /*  VBO containing point locations  */
@@ -396,15 +405,14 @@ typedef struct Voronoi_ {
     GLuint fbo;     /*  Framebuffer for render-to-texture   */
 } Voronoi;
 
-Voronoi* voronoi_new(size_t cone_res, size_t point_count,
-                     size_t width, size_t height)
+Voronoi* voronoi_new(const Config* cfg)
 {
     Voronoi* v = (Voronoi*)calloc(1, sizeof(Voronoi));
     glGenVertexArrays(1, &v->vao);
 
     glBindVertexArray(v->vao);
-        build_cone(cone_res);           /* Uses bound VAO   */
-        v->pts = build_instances(point_count);   /* (same) */
+        build_cone(cfg->resolution);           /* Uses bound VAO   */
+        v->pts = build_instances(cfg->samples);   /* (same) */
     glBindVertexArray(0);
 
     v->prog = build_program(
@@ -415,10 +423,11 @@ Voronoi* voronoi_new(size_t cone_res, size_t point_count,
     v->depth= new_texture();
 
     glBindTexture(GL_TEXTURE_2D, v->tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, cfg->width, cfg->height,
                      0, GL_RGB, GL_UNSIGNED_BYTE, 0);
     glBindTexture(GL_TEXTURE_2D, v->depth);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT,
+                     cfg->width, cfg->height,
                      0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -504,23 +513,24 @@ int main(int argc, char** argv)
     (void)argc;
     (void)argv;
 
-    static const size_t cone_res = 64;
-    static const size_t point_count = 100;
-    static const size_t width = 500;
-    static const size_t height = 500;
+    Config config = (Config){
+        .width = 500,
+        .height = 500,
+        .samples = 100,
+        .resolution = 64};
 
-    GLFWwindow* win = make_context(width, height);
+    GLFWwindow* win = make_context(config.width, config.height);
 
     /*************************************************************************/
     /*  Generate all of the parts used in the voronoi rendering step         */
-    Voronoi* v = voronoi_new(cone_res, point_count, width, height);
+    Voronoi* v = voronoi_new(&config);
     /*************************************************************************/
     /*  Build everything needed for the summing stage                        */
     GLuint quad_vao = build_quad();
 
     GLuint sum_tex = new_texture();
     glBindTexture(GL_TEXTURE_2D, sum_tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, point_count, height,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, config.samples, config.height,
                      0, GL_RGB, GL_FLOAT, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -540,7 +550,7 @@ int main(int argc, char** argv)
     /*  Build everything needed for the transform feedback stage             */
     GLuint feedback_shader = build_shader(GL_VERTEX_SHADER, feedback_src);
     GLuint feedback_program = glCreateProgram();
-    GLuint feedback_vao = build_feedback(point_count);
+    GLuint feedback_vao = build_feedback(config.samples);
     glAttachShader(feedback_program, feedback_shader);
     const GLchar* feedback_varying[] = { "pos" };
     glTransformFeedbackVaryings(feedback_program, 1, feedback_varying,
@@ -557,11 +567,11 @@ int main(int argc, char** argv)
     while (!glfwWindowShouldClose(win))
     {
         render_voronoi(v->prog, v->fbo, v->vao,
-                       cone_res, point_count, width, height);
+                       config.resolution, config.samples, config.width, config.height);
         render_sum(sum_program, sum_fbo, quad_vao, v->tex,
-                   point_count, height);
+                   config.samples, config.height);
         render_feedback(feedback_vao, v->pts, sum_tex,
-                        feedback_program, point_count);
+                        feedback_program, config.samples);
 
         // Then draw the quad
         glBindVertexArray(quad_vao);
