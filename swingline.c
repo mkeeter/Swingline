@@ -442,24 +442,22 @@ Voronoi* voronoi_new(const Config* cfg)
 }
 
 
-void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
-                    size_t cone_res, size_t point_count,
-                    size_t width, size_t height)
+void voronoi_draw(Config* cfg, Voronoi* v)
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, v->fbo);
 
-        GLint viewport[4];
-        glGetIntegerv(GL_VIEWPORT, viewport);
-        glViewport(0, 0, width, height);
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glViewport(0, 0, cfg->width, cfg->height);
 
-        glEnable(GL_DEPTH_TEST);
-        glClearColor(0.0f, 1.0f, 1.0f, 1.0f);
-        glClearDepth(1.0f);
-        glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0.0f, 1.0f, 1.0f, 1.0f);
+    glClearDepth(1.0f);
+    glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 
-        glUseProgram(program);
-            glBindVertexArray(vao);
-                glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cone_res + 2, point_count);
+    glUseProgram(v->prog);
+    glBindVertexArray(v->vao);
+    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+2, cfg->samples);
 
     teardown(viewport);
 }
@@ -564,8 +562,7 @@ int main(int argc, char** argv)
 
     while (!glfwWindowShouldClose(win))
     {
-        render_voronoi(v->prog, v->fbo, v->vao,
-                       config.resolution, config.samples, config.width, config.height);
+        voronoi_draw(&config, v);
         render_sum(sum_program, sum_fbo, quad_vao, v->tex,
                    config.samples, config.height);
         render_feedback(feedback_vao, v->pts, sum_tex,
