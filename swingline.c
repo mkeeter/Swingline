@@ -396,6 +396,45 @@ typedef struct Voronoi_ {
     GLuint fbo;     /*  Framebuffer for render-to-texture   */
 } Voronoi;
 
+Voronoi* voronoi_new(size_t cone_res, size_t point_count,
+                     size_t width, size_t height)
+{
+    Voronoi* v = (Voronoi*)calloc(1, sizeof(Voronoi));
+    glGenVertexArrays(1, &v->vao);
+
+    glBindVertexArray(v->vao);
+        build_cone(cone_res);           /* Uses bound VAO   */
+        v->pts = build_instances(point_count);   /* (same) */
+    glBindVertexArray(0);
+
+    v->prog = build_program(
+        build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
+        build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
+
+    v->tex= new_texture();
+    v->depth= new_texture();
+
+    glBindTexture(GL_TEXTURE_2D, v->tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
+                     0, GL_RGB, GL_UNSIGNED_BYTE, 0);
+    glBindTexture(GL_TEXTURE_2D, v->depth);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height,
+                     0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glGenFramebuffers(1, &v->fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, v->fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, v->tex, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               GL_TEXTURE_2D, v->depth, 0);
+    check_fbo("voronoi");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    return v;
+}
+
+
 void render_voronoi(GLuint program, GLuint fbo, GLuint vao,
                     size_t cone_res, size_t point_count,
                     size_t width, size_t height)
@@ -474,38 +513,7 @@ int main(int argc, char** argv)
 
     /*************************************************************************/
     /*  Generate all of the parts used in the voronoi rendering step         */
-    Voronoi* v = (Voronoi*)calloc(1, sizeof(Voronoi));
-    glGenVertexArrays(1, &v->vao);
-
-    glBindVertexArray(v->vao);
-        build_cone(cone_res);           /* Uses bound VAO   */
-        v->pts = build_instances(point_count);   /* (same) */
-    glBindVertexArray(0);
-
-    v->prog = build_program(
-        build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
-
-    v->tex= new_texture();
-    v->depth= new_texture();
-
-    glBindTexture(GL_TEXTURE_2D, v->tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
-                     0, GL_RGB, GL_UNSIGNED_BYTE, 0);
-    glBindTexture(GL_TEXTURE_2D, v->depth);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, width, height,
-                     0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    glGenFramebuffers(1, &v->fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, v->fbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                               GL_TEXTURE_2D, v->tex, 0);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
-                               GL_TEXTURE_2D, v->depth, 0);
-    check_fbo("voronoi");
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
+    Voronoi* v = voronoi_new(cone_res, point_count, width, height);
     /*************************************************************************/
     /*  Build everything needed for the summing stage                        */
     GLuint quad_vao = build_quad();
