@@ -56,9 +56,18 @@ const char* blit_frag_src = GLSL(
 
     uniform sampler2D tex;
 
+    float rand(vec2 co)
+    {
+        return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+    }
+
     void main()
     {
-        color = texture(tex, pos_);
+        vec4 t = texture(tex, pos_);
+        float r = rand(vec2(t.x, t.y));
+        float g = rand(vec2(t.y, t.x));
+        float b = rand(vec2(t.x - t.y, t.x));
+        color = vec4(r, g, b, 1.0f);
     }
 );
 
