@@ -58,8 +58,7 @@ const char* blit_frag_src = GLSL(
 
     void main()
     {
-        vec4 t = texture(tex, pos_);
-        color = vec4(t.xyz, 1.0f);
+        color = texture(tex, pos_);
     }
 );
 
