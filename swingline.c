@@ -80,7 +80,7 @@ const char* sum_frag_src = GLSL(
         for (int x=0; x < tex_size.x; x++)
         {
             vec4 t = texelFetch(voronoi, ivec2(x, gl_FragCoord.y), 0);
-            int i = int(255.0f * (t.r + (t.g * 255.0f) + (t.b * 65535.0f)));
+            int i = int(255.0f * (t.r + (t.g * 256.0f) + (t.b * 65536.0f)));
             if (i == my_index)
             {
                 float wx = 1.0f; // Replace these with weights later
