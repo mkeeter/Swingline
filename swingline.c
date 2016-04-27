@@ -605,7 +605,7 @@ Stipples* stipples_new(Config* cfg, Voronoi* v)
 
     {   // Make and bind a VBO that draws a simple circle
         GLuint vbo;
-        size_t bytes = (1 + cfg->resolution) * 2 * sizeof(float);
+        size_t bytes = (2 + cfg->resolution) * 2 * sizeof(float);
         float* buf = (float*)malloc(bytes);
 
         buf[0] = 0;
@@ -647,7 +647,7 @@ void stipples_draw(Config* cfg, Stipples* s)
     glUniform1f(glGetUniformLocation(s->prog, "rx"), 0.01);
     glUniform1f(glGetUniformLocation(s->prog, "ry"), 0.01);
     glBindVertexArray(s->vao);
-    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+1, cfg->samples);
+    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+2, cfg->samples);
 
     teardown(NULL);
 }
