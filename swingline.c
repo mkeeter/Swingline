@@ -9,6 +9,7 @@
 /******************************************************************************/
 
 #define GLSL(src) "#version 330 core\n" #src
+
 const char* voronoi_vert_src = GLSL(
     layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
     layout(location=1) in vec2 offset;  /*  0 to 1 */
@@ -94,16 +95,16 @@ const char* sum_frag_src = GLSL(
                 float wx = 1.0f; // Replace these with weights later
                 float wy = 1.0f;
 
-                color.x += x * wx;
-                color.y += gl_FragCoord.y * wy;
+                color.x += (x + 0.5f) * wx;
+                color.y += (gl_FragCoord.y + 0.5f) * wy;
                 color.z += wx;
                 color.w += wy;
             }
         }
 
         // Normalize to the 0 - 1 range
-        color.x /= (tex_size.x - 1);
-        color.y /= (tex_size.y - 1);
+        color.x = color.x / tex_size.x;
+        color.y = color.y / tex_size.y;
     }
 );
 
