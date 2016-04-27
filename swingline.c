@@ -13,12 +13,13 @@
 const char* voronoi_vert_src = GLSL(
     layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
     layout(location=1) in vec2 offset;  /*  0 to 1 */
+    uniform vec2 scale;
 
     out vec3 color_;
 
     void main()
     {
-        gl_Position = vec4(pos.xy + 2.0f*offset - 1.0f, pos.z, 1.0f);
+        gl_Position = vec4(pos.xy*scale + 2.0f*offset - 1.0f, pos.z, 1.0f);
 
         // Pick color based on instance ID
         int r = gl_InstanceID           % 256;
@@ -367,11 +368,36 @@ void check_fbo(const char* description)
 ////////////////////////////////////////////////////////////////////////////////
 
 typedef struct Config_ {
-    size_t width;
-    size_t height;
-    size_t samples;
-    size_t resolution;
+    size_t width, height;   /* Image size   */
+    size_t samples;         /*  Number of Voronoi cells */
+    size_t resolution;      /*   Resolution of Voronoi cones  */
+
+    float sx, sy;           /*  Scale (used to adjust for aspect ratio) */
 } Config;
+
+Config* config_new(size_t width, size_t height, size_t samples,
+                   size_t resolution)
+{
+    Config* c = (Config*)calloc(1, sizeof(Config));
+
+    (*c) = (Config){
+        .width = width,
+        .height = height,
+        .samples = samples,
+        .resolution = resolution};
+
+    if (width > height)
+    {
+        c->sx = 1;
+        c->sy = (float)width / (float)height;
+    }
+    else
+    {
+        c->sx = (float)height / (float)width;
+        c->sy = 1;
+    }
+    return c;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -435,6 +461,7 @@ void voronoi_draw(Config* cfg, Voronoi* v)
 
     glUseProgram(v->prog);
     glBindVertexArray(v->vao);
+    glUniform2f(glGetUniformLocation(v->prog, "scale"), cfg->sx, cfg->sy);
     glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+2, cfg->samples);
 
     teardown(viewport);
@@ -571,12 +598,11 @@ const char* stipples_vert_src = GLSL(
     layout(location=1) in vec2 offset;  /*  0 to 1 */
 
     /*  Seperate radii to compensate for window aspect ratio  */
-    uniform float rx;
-    uniform float ry;
+    uniform vec2 radius;
 
     void main()
     {
-        vec2 scaled = vec2(pos.x*rx, pos.y*ry);
+        vec2 scaled = vec2(pos.x * radius.x, pos.y * radius.y);
         gl_Position = vec4(scaled + 2.0f*offset - 1.0f, 0.0f, 1.0f);
     }
 );
@@ -644,8 +670,8 @@ void stipples_draw(Config* cfg, Stipples* s)
 {
     glUseProgram(s->prog);
 
-    glUniform1f(glGetUniformLocation(s->prog, "rx"), 0.01);
-    glUniform1f(glGetUniformLocation(s->prog, "ry"), 0.01);
+    glUniform2f(glGetUniformLocation(s->prog, "radius"),
+                0.01 * cfg->sx, 0.01 * cfg->sy);
     glBindVertexArray(s->vao);
     glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+2, cfg->samples);
 
@@ -659,25 +685,21 @@ int main(int argc, char** argv)
     (void)argc;
     (void)argv;
 
-    Config config = (Config){
-        .width = 500,
-        .height = 500,
-        .samples = 100,
-        .resolution = 64};
 
-    GLFWwindow* win = make_context(config.width, config.height);
+    Config* c = config_new(100, 500, 100, 64);
+    GLFWwindow* win = make_context(c->width, c->height);
 
     /*  These are the three stages in the stipple update loop   */
-    Voronoi* v = voronoi_new(&config);
-    Sum* s = sum_new(&config);
-    Feedback* f = feedback_new(config.samples);
+    Voronoi* v = voronoi_new(c);
+    Sum* s = sum_new(c);
+    Feedback* f = feedback_new(c->samples);
 
     /*  These are used for rendering to the screen  */
     GLuint quad_vao = build_quad();
     GLuint blit_program = build_program(
         build_shader(GL_VERTEX_SHADER, quad_vert_src),
         build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
-    Stipples* stipples = stipples_new(&config, v);
+    Stipples* stipples = stipples_new(c, v);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClearDepth(1.0f);
@@ -685,11 +707,11 @@ int main(int argc, char** argv)
     while (!glfwWindowShouldClose(win))
     {
         /*  Render the current voronoi diagram's state  */
-        voronoi_draw(&config, v);
+        voronoi_draw(c, v);
 
         /*  Calculate the centroids and write them to v->pts  */
-        sum_draw(&config, v, s);
-        feedback_draw(&config, v, s, f);
+        sum_draw(c, v, s);
+        feedback_draw(c, v, s, f);
 
         /*  Then draw the quad   */
         glBindVertexArray(quad_vao);
@@ -704,7 +726,7 @@ int main(int argc, char** argv)
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
         /*  Render cell centroids as white dots  */
-        stipples_draw(&config, stipples);
+        stipples_draw(c, stipples);
 
         /*  Draw and poll   */
         glfwSwapBuffers(win);
