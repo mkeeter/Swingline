@@ -566,6 +566,94 @@ void feedback_draw(Config* cfg, Voronoi* v, Sum* s, Feedback* f)
 
 /******************************************************************************/
 
+const char* stipples_vert_src = GLSL(
+    layout(location=0) in vec2 pos;     /*  Absolute coordinates  */
+    layout(location=1) in vec2 offset;  /*  0 to 1 */
+
+    /*  Seperate radii to compensate for window aspect ratio  */
+    uniform float rx;
+    uniform float ry;
+
+    void main()
+    {
+        vec2 scaled = vec2(pos.x*rx, pos.y*ry);
+        gl_Position = vec4(scaled + 2.0f*offset - 1.0f, 0.0f, 1.0f);
+    }
+);
+
+const char* stipples_frag_src = GLSL(
+    layout (location=0) out vec4 color;
+
+    void main()
+    {
+        color = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    }
+);
+
+typedef struct Stipples_
+{
+    GLuint vao;
+    GLuint prog;
+} Stipples;
+
+Stipples* stipples_new(Config* cfg, Voronoi* v)
+{
+    Stipples* s = (Stipples*)calloc(1, sizeof(Stipples));
+
+    glGenVertexArrays(1, &s->vao);
+    glBindVertexArray(s->vao);
+
+    {   // Make and bind a VBO that draws a simple circle
+        GLuint vbo;
+        size_t bytes = (1 + cfg->resolution) * 2 * sizeof(float);
+        float* buf = (float*)malloc(bytes);
+
+        buf[0] = 0;
+        buf[1] = 0;
+        for (size_t i=0; i <= cfg->resolution; ++i)
+        {
+            float angle = 2 * M_PI * i / cfg->resolution;
+            buf[i*2 + 2] = cos(angle);
+            buf[i*2 + 3] = sin(angle);
+        }
+
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
+
+        free(buf);
+    }
+
+    // Bind the Voronoi points array to location 1 in the VAO
+    glBindBuffer(GL_ARRAY_BUFFER, v->pts);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glVertexAttribDivisor(1, 1);
+
+    s->prog = build_program(
+        build_shader(GL_VERTEX_SHADER, stipples_vert_src),
+        build_shader(GL_FRAGMENT_SHADER, stipples_frag_src));
+
+    teardown(NULL);
+    return s;
+}
+
+void stipples_draw(Config* cfg, Stipples* s)
+{
+    glUseProgram(s->prog);
+
+    glUniform1f(glGetUniformLocation(s->prog, "rx"), 0.01);
+    glUniform1f(glGetUniformLocation(s->prog, "ry"), 0.01);
+    glBindVertexArray(s->vao);
+    glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+1, cfg->samples);
+
+    teardown(NULL);
+}
+
+/******************************************************************************/
+
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -589,14 +677,17 @@ int main(int argc, char** argv)
     GLuint blit_program = build_program(
         build_shader(GL_VERTEX_SHADER, quad_vert_src),
         build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
+    Stipples* stipples = stipples_new(&config, v);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClearDepth(1.0f);
 
     while (!glfwWindowShouldClose(win))
     {
-        /*  Execute the update calculation  */
+        /*  Render the current voronoi diagram's state  */
         voronoi_draw(&config, v);
+
+        /*  Calculate the centroids and write them to v->pts  */
         sum_draw(&config, v, s);
         feedback_draw(&config, v, s, f);
 
@@ -611,6 +702,9 @@ int main(int argc, char** argv)
         glClear(GL_COLOR_BUFFER_BIT);
 
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+        /*  Render cell centroids as white dots  */
+        stipples_draw(&config, stipples);
 
         /*  Draw and poll   */
         glfwSwapBuffers(win);
