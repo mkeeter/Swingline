@@ -285,35 +285,6 @@ GLuint build_quad()
 
 /******************************************************************************/
 
-GLuint build_feedback(size_t point_count)
-{
-    GLuint vao;
-    GLuint vbo;
-    size_t bytes = sizeof(GLuint) * point_count;
-    GLuint* indices = (GLuint*)malloc(bytes);
-
-    for (size_t i=0; i < point_count; ++i)
-    {
-        indices[i] = i;
-    }
-
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-
-    glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, bytes, indices, GL_STATIC_DRAW);
-        glEnableVertexAttribArray(0);
-        glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 0, 0);
-    glBindVertexArray(0);
-
-    free(indices);
-
-    return vao;
-}
-
-/******************************************************************************/
-
 /*
  *  Creates an OpenGL context (3.3 or higher)
  *  Returns a window pointer; the context is made current
@@ -451,8 +422,6 @@ void voronoi_draw(Config* cfg, Voronoi* v)
     glViewport(0, 0, cfg->width, cfg->height);
 
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.0f, 1.0f, 1.0f, 1.0f);
-    glClearDepth(1.0f);
     glClear(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT);
 
     glUseProgram(v->prog);
@@ -495,7 +464,7 @@ Sum* sum_new(Config* config)
     return sum;
 }
 
-void sum_draw(Config* cfg, GLuint tex, Sum* s)
+void sum_draw(Config* cfg, Voronoi* v, Sum* s)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
 
@@ -504,32 +473,84 @@ void sum_draw(Config* cfg, GLuint tex, Sum* s)
     glGetIntegerv(GL_VIEWPORT, viewport);
     glViewport(0, 0, cfg->samples, cfg->height);
 
-    glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
     glUseProgram(s->prog);
     glBindVertexArray(s->vao);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex);
+    glBindTexture(GL_TEXTURE_2D, v->tex);
     glUniform1i(glGetUniformLocation(s->prog, "tex"), 0);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     teardown(viewport);
 }
 
-void render_feedback(GLuint vao, GLuint vbo, GLuint tex,
-                     GLuint program, size_t point_count)
+////////////////////////////////////////////////////////////////////////////////
+
+typedef struct Feedback_
+{
+    GLuint vao;
+    GLuint prog;
+} Feedback;
+
+GLuint feedback_indices(size_t samples)
+{
+    GLuint vao;
+    GLuint vbo;
+    size_t bytes = sizeof(GLuint) * samples;
+    GLuint* indices = (GLuint*)malloc(bytes);
+
+    for (size_t i=0; i < samples; ++i)
+    {
+        indices[i] = i;
+    }
+
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+
+    glBindVertexArray(vao);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, bytes, indices, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(0);
+        glVertexAttribIPointer(0, 1, GL_UNSIGNED_INT, 0, 0);
+    glBindVertexArray(0);
+
+    free(indices);
+
+    return vao;
+}
+
+Feedback* feedback_new(GLuint samples)
+{
+    Feedback* f = (Feedback*)calloc(1, sizeof(Feedback));
+
+    f->prog = glCreateProgram();
+    GLuint shader = build_shader(GL_VERTEX_SHADER, feedback_src);
+    glAttachShader(f->prog, shader);
+    const GLchar* varying[] = { "pos" };
+    glTransformFeedbackVaryings(f->prog, 1, varying, GL_INTERLEAVED_ATTRIBS);
+    glLinkProgram(f->prog);
+    check_program(f->prog);
+
+    f->vao = feedback_indices(samples);
+
+    return f;
+}
+
+void feedback_draw(Config* cfg, Voronoi* v, Sum* s, Feedback* f)
 {
     glEnable(GL_RASTERIZER_DISCARD);
-    glBindVertexArray(vao);
-        glUseProgram(program);
+    glBindVertexArray(f->vao);
+    glUseProgram(f->prog);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glUniform1i(glGetUniformLocation(program, "tex"), 0);
-            glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, vbo);
-            glBeginTransformFeedback(GL_POINTS);
-                glDrawArrays(GL_POINTS, 0, point_count);
-            glEndTransformFeedback();
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, s->tex);
+    glUniform1i(glGetUniformLocation(f->prog, "tex"), 0);
+    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, v->pts);
+
+    glBeginTransformFeedback(GL_POINTS);
+    glDrawArrays(GL_POINTS, 0, cfg->samples);
+    glEndTransformFeedback();
+
     glDisable(GL_RASTERIZER_DISCARD);
     teardown(NULL);
 }
@@ -549,57 +570,41 @@ int main(int argc, char** argv)
 
     GLFWwindow* win = make_context(config.width, config.height);
 
-    /*************************************************************************/
-    /*  Generate all of the parts used in the voronoi rendering step         */
+    /*  These are the three stages in the stipple update loop   */
     Voronoi* v = voronoi_new(&config);
-    /*************************************************************************/
-    /*  Build everything needed for the summing stage                        */
-    GLuint quad_vao = build_quad();
-
     Sum* s = sum_new(&config);
+    Feedback* f = feedback_new(config.samples);
 
-    /*************************************************************************/
-    /*  Build everything needed for the transform feedback stage             */
-    GLuint feedback_shader = build_shader(GL_VERTEX_SHADER, feedback_src);
-    GLuint feedback_program = glCreateProgram();
-    GLuint feedback_vao = build_feedback(config.samples);
-    glAttachShader(feedback_program, feedback_shader);
-    const GLchar* feedback_varying[] = { "pos" };
-    glTransformFeedbackVaryings(feedback_program, 1, feedback_varying,
-                                GL_INTERLEAVED_ATTRIBS);
-    glLinkProgram(feedback_program);
-    check_program(feedback_program);
-
-    /*************************************************************************/
+    /*  These are used for rendering to the screen  */
+    GLuint quad_vao = build_quad();
     GLuint blit_program = build_program(
         build_shader(GL_VERTEX_SHADER, quad_vert_src),
         build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
 
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearDepth(1.0f);
 
     while (!glfwWindowShouldClose(win))
     {
+        /*  Execute the update calculation  */
         voronoi_draw(&config, v);
-        sum_draw(&config, v->tex, s);
-        render_feedback(feedback_vao, v->pts, s->tex,
-                        feedback_program, config.samples);
+        sum_draw(&config, v, s);
+        feedback_draw(&config, v, s, f);
 
-        // Then draw the quad
+        /*  Then draw the quad   */
         glBindVertexArray(quad_vao);
         glUseProgram(blit_program);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, v->tex);
         glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
 
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glDisable(GL_DEPTH_TEST);
         glClear(GL_COLOR_BUFFER_BIT);
 
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
-        // Swap front and back buffers
+        /*  Draw and poll   */
         glfwSwapBuffers(win);
-
-        // Poll for and process events
         glfwPollEvents();
     }
 
