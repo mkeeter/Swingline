@@ -101,7 +101,8 @@ const char* sum_frag_src = GLSL(
             {
                 float weight = 1 - texelFetch(img, coord, 0)[0];
                 color.xy += (coord + 0.5f) * weight;
-                color.zw += weight;
+                color.w += weight;
+                color.z += 1.0f;
             }
         }
 
@@ -120,21 +121,20 @@ const char* feedback_src = GLSL(
     {
         ivec2 tex_size = textureSize(summed, 0);
         pos = vec3(0.0f, 0.0f, 0.0f);
-        vec2 divisor = vec2(0.0f, 0.0f);
+        float weight = 0.0f;
+        float count = 0;
         for (int y=0; y < tex_size.y; ++y)
         {
             vec4 t = texelFetch(summed, ivec2(index, y), 0);
             pos.xy += t.xy;
-            divisor += t.zw;
+            weight += t.w;
+            count += t.z;
         }
-        if (divisor.x != 0)
+        if (weight != 0)
         {
-            pos.x /= divisor.x;
+            pos.xy /= weight;
         }
-        if (divisor.y != 0)
-        {
-            pos.y /= divisor.y;
-        }
+        pos.z = weight / count;
     }
 );
 
@@ -609,16 +609,17 @@ void feedback_draw(Config* cfg, Voronoi* v, Sum* s, Feedback* f)
 /******************************************************************************/
 
 const char* stipples_vert_src = GLSL(
-    layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
-    layout(location=1) in vec2 offset;  /*  0 to 1 */
+    layout(location=0) in vec2 pos;     /*  Absolute coordinates  */
+    layout(location=1) in vec3 offset;  /*  0 to 1 */
 
     /*  Seperate radii to compensate for window aspect ratio  */
     uniform vec2 radius;
 
     void main()
     {
-        vec2 scaled = vec2(pos.x * radius.x, pos.y * radius.y);
-        gl_Position = vec4(scaled + 2.0f*offset - 1.0f, 0.0f, 1.0f);
+        float r = 0.2f + 0.8f * offset.z;
+        vec2 scaled = vec2(pos.x * radius.x, pos.y * radius.y) * r;
+        gl_Position = vec4(scaled + 2.0f*offset.xy - 1.0f, 0.0f, 1.0f);
     }
 );
 
@@ -627,7 +628,7 @@ const char* stipples_frag_src = GLSL(
 
     void main()
     {
-        color = vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        color = vec4(0.0f, 0.0f, 0.0f, 1.0f);
     }
 );
 
