@@ -113,18 +113,18 @@ const char* sum_frag_src = GLSL(
 
 const char* feedback_src = GLSL(
     layout (location=0) in uint index;
-    out vec2 pos;
+    out vec3 pos;
 
     uniform sampler2D summed;
     void main()
     {
         ivec2 tex_size = textureSize(summed, 0);
-        pos = vec2(0.0f, 0.0f);
+        pos = vec3(0.0f, 0.0f, 0.0f);
         vec2 divisor = vec2(0.0f, 0.0f);
         for (int y=0; y < tex_size.y; ++y)
         {
             vec4 t = texelFetch(summed, ivec2(index, y), 0);
-            pos += t.xy;
+            pos.xy += t.xy;
             divisor += t.zw;
         }
         if (divisor.x != 0)
@@ -250,13 +250,15 @@ void build_cone(size_t n)
 GLuint build_instances(size_t n)
 {
     GLuint vbo;
-    size_t bytes = n * 2 * sizeof(float);
+    size_t bytes = n * 3 * sizeof(float);
     float* buf = (float*)malloc(bytes);
 
     /*  Fill the buffer with random numbers between -1 and 1 */
-    for (size_t i=0; i < 2*n; ++i)
+    for (size_t i=0; i < n; ++i)
     {
-        buf[i] = (float)rand() / RAND_MAX;
+        buf[3*i]     = (float)rand() / RAND_MAX;
+        buf[3*i + 1] = (float)rand() / RAND_MAX;
+        buf[3*i + 2] = 0.0f;
     }
 
     glGenBuffers(1, &vbo);
@@ -264,7 +266,7 @@ GLuint build_instances(size_t n)
     glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_DYNAMIC_DRAW);
 
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 3*sizeof(float), 0);
     glVertexAttribDivisor(1, 1);
 
     free(buf);
@@ -607,7 +609,7 @@ void feedback_draw(Config* cfg, Voronoi* v, Sum* s, Feedback* f)
 /******************************************************************************/
 
 const char* stipples_vert_src = GLSL(
-    layout(location=0) in vec2 pos;     /*  Absolute coordinates  */
+    layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
     layout(location=1) in vec2 offset;  /*  0 to 1 */
 
     /*  Seperate radii to compensate for window aspect ratio  */
@@ -668,7 +670,7 @@ Stipples* stipples_new(Config* cfg, Voronoi* v)
     // Bind the Voronoi points array to location 1 in the VAO
     glBindBuffer(GL_ARRAY_BUFFER, v->pts);
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, 0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
     glVertexAttribDivisor(1, 1);
 
     s->prog = build_program(
