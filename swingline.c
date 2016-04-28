@@ -83,8 +83,8 @@ const char* blit_frag_src = GLSL(
 );
 
 const char* sum_frag_src = GLSL(
-    layout (location=0) out vec4 color;
     layout (pixel_center_integer) in vec4 gl_FragCoord;
+    out vec4 color;
 
     uniform sampler2D voronoi;
     uniform sampler2D img;
