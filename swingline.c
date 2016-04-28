@@ -12,7 +12,14 @@
 
 /******************************************************************************/
 
-#define GLSL(src) "#version 330 core\n" #src
+#define GLSL_(src) "#version 330 core\n" #src
+#define GLSL(src) GLSL_(src)
+
+#define GLSL_DEFINE_RAND \
+    float rand(vec2 co)  \
+    {                    \
+        return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);  \
+    }
 
 const char* voronoi_vert_src = GLSL(
     layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
@@ -62,10 +69,7 @@ const char* blit_frag_src = GLSL(
 
     uniform sampler2D tex;
 
-    float rand(vec2 co)
-    {
-        return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
-    }
+    GLSL_DEFINE_RAND
 
     void main()
     {
