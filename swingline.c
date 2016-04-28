@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <math.h>
+#include <unistd.h>
 
 #include <png.h>
 #include <epoxy/gl.h>
@@ -376,19 +377,22 @@ void check_fbo(const char* description)
 ////////////////////////////////////////////////////////////////////////////////
 
 typedef struct Config_ {
-    size_t width, height;   /* Image size   */
+    stbi_uc* img;           /*  Pointer to raw image data  */
+
+    size_t width, height;   /*  Image size   */
     size_t samples;         /*  Number of Voronoi cells */
-    size_t resolution;      /*   Resolution of Voronoi cones  */
+    size_t resolution;      /*  Resolution of Voronoi cones  */
 
     float sx, sy;           /*  Scale (used to adjust for aspect ratio) */
 } Config;
 
-Config* config_new(size_t width, size_t height, size_t samples,
-                   size_t resolution)
+Config* config_new(stbi_uc* img, size_t width, size_t height,
+                   size_t samples, size_t resolution)
 {
     Config* c = (Config*)calloc(1, sizeof(Config));
 
     (*c) = (Config){
+        .img = img,
         .width = width,
         .height = height,
         .samples = samples,
@@ -700,28 +704,57 @@ void stipples_draw(Config* cfg, Stipples* s)
 
 /******************************************************************************/
 
-int main(int argc, char** argv)
+void print_usage(char* prog)
 {
-    if (argc != 2)
+    fprintf(stderr, "Usage: %s [-n samples] file\n", prog);
+}
+
+Config* parse_args(int argc, char** argv)
+{
+    int n = 1000;
+    while (true)
     {
-        printf("Usage: swingline image.jpg\n");
-        exit(-1);
+        char c = getopt(argc, argv, "n:");
+        if (c == -1) {  break; }
+
+        switch (c)
+        {
+            case 'n':
+                n = atoi(optarg);
+                break;
+            default:
+                print_usage(argv[0]);
+                exit(EXIT_FAILURE);
+        };
+    }
+
+    if (optind >= argc)
+    {
+        fprintf(stderr, "%s: expected filename after options\n", argv[0]);
+        print_usage(argv[0]);
+        exit(EXIT_FAILURE);
     }
 
     int x, y;
     stbi_set_flip_vertically_on_load(true);
-    stbi_uc* img = stbi_load(argv[1], &x, &y, NULL, 1);
+    stbi_uc* img = stbi_load(argv[optind], &x, &y, NULL, 1);
+
     if (img == NULL)
     {
         fprintf(stderr, "Error loading image: %s\n", stbi_failure_reason());
         exit(-1);
     }
 
-    Config* c = config_new(x, y, 100, 64);
+    return config_new(img, x, y, n, 256);
+}
+
+int main(int argc, char** argv)
+{
+    Config* c = parse_args(argc, argv);
     GLFWwindow* win = make_context(c->width, c->height);
 
     /*  These are the three stages in the stipple update loop   */
-    Voronoi* v = voronoi_new(c, img);
+    Voronoi* v = voronoi_new(c, c->img);
     Sum* s = sum_new(c);
     Feedback* f = feedback_new(c->samples);
 
