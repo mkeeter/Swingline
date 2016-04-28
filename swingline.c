@@ -82,6 +82,7 @@ const char* sum_frag_src = GLSL(
     layout (pixel_center_integer) in vec4 gl_FragCoord;
 
     uniform sampler2D voronoi;
+    uniform sampler2D img;
 
     void main()
     {
@@ -93,17 +94,14 @@ const char* sum_frag_src = GLSL(
         // weighted sum of the pixels that match our index
         for (int x=0; x < tex_size.x; x++)
         {
-            vec4 t = texelFetch(voronoi, ivec2(x, gl_FragCoord.y), 0);
+            ivec2 coord = ivec2(x, gl_FragCoord.y);
+            vec4 t = texelFetch(voronoi, coord, 0);
             int i = int(255.0f * (t.r + (t.g * 256.0f) + (t.b * 65536.0f)));
             if (i == my_index)
             {
-                float wx = 1.0f; // Replace these with weights later
-                float wy = 1.0f;
-
-                color.x += (x + 0.5f) * wx;
-                color.y += (gl_FragCoord.y + 0.5f) * wy;
-                color.z += wx;
-                color.w += wy;
+                float weight = 1 - texelFetch(img, coord, 0)[0];
+                color.xy += (coord + 0.5f) * weight;
+                color.zw += weight;
             }
         }
 
@@ -522,9 +520,15 @@ void sum_draw(Config* cfg, Voronoi* v, Sum* s)
 
     glUseProgram(s->prog);
     glBindVertexArray(s->vao);
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, v->tex);
-    glUniform1i(glGetUniformLocation(s->prog, "tex"), 0);
+    glUniform1i(glGetUniformLocation(s->prog, "voronoi"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, v->img);
+    glUniform1i(glGetUniformLocation(s->prog, "img"), 1);
+
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
     teardown(viewport);
 }
@@ -691,10 +695,14 @@ void stipples_draw(Config* cfg, Stipples* s)
 
 int main(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
+    if (argc != 2)
+    {
+        printf("Usage: swingline image.jpg\n");
+        exit(-1);
+    }
 
     int x, y;
+    stbi_set_flip_vertically_on_load(true);
     stbi_uc* img = stbi_load(argv[1], &x, &y, NULL, 1);
     if (img == NULL)
     {
