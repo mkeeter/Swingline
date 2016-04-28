@@ -6,6 +6,10 @@
 #include <epoxy/gl.h>
 #include <GLFW/glfw3.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_FAILURE_USERMSG
+#include "stb_image.h"
+
 /******************************************************************************/
 
 #define GLSL(src) "#version 330 core\n" #src
@@ -405,13 +409,14 @@ typedef struct Voronoi_ {
     GLuint vao;     /*  VAO with bound cone and offsets */
     GLuint pts;     /*  VBO containing point locations  */
     GLuint prog;    /*  Shader program (compiled)       */
+    GLuint img;     /*  Target image texture            */
 
     GLuint tex;     /*  RGB texture (bound to fbo)          */
     GLuint depth;   /*  Depth texture (bound to fbo)        */
     GLuint fbo;     /*  Framebuffer for render-to-texture   */
 } Voronoi;
 
-Voronoi* voronoi_new(const Config* cfg)
+Voronoi* voronoi_new(const Config* cfg, uint8_t* img)
 {
     Voronoi* v = (Voronoi*)calloc(1, sizeof(Voronoi));
     glGenVertexArrays(1, &v->vao);
@@ -425,8 +430,9 @@ Voronoi* voronoi_new(const Config* cfg)
         build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
         build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
 
-    v->tex= new_texture();
-    v->depth= new_texture();
+    v->tex   = new_texture();
+    v->depth = new_texture();
+    v->img   = new_texture();
 
     glBindTexture(GL_TEXTURE_2D, v->tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, cfg->width, cfg->height,
@@ -434,6 +440,9 @@ Voronoi* voronoi_new(const Config* cfg)
     glBindTexture(GL_TEXTURE_2D, v->depth);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, cfg->width, cfg->height,
                  0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+    glBindTexture(GL_TEXTURE_2D, v->img);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, cfg->width, cfg->height,
+                 0, GL_RED, GL_UNSIGNED_BYTE, img);
 
     glGenFramebuffers(1, &v->fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, v->fbo);
@@ -685,12 +694,19 @@ int main(int argc, char** argv)
     (void)argc;
     (void)argv;
 
+    int x, y;
+    stbi_uc* img = stbi_load(argv[1], &x, &y, NULL, 1);
+    if (img == NULL)
+    {
+        fprintf(stderr, "Error loading image: %s\n", stbi_failure_reason());
+        exit(-1);
+    }
 
-    Config* c = config_new(100, 500, 100, 64);
+    Config* c = config_new(x, y, 100, 64);
     GLFWwindow* win = make_context(c->width, c->height);
 
     /*  These are the three stages in the stipple update loop   */
-    Voronoi* v = voronoi_new(c);
+    Voronoi* v = voronoi_new(c, img);
     Sum* s = sum_new(c);
     Feedback* f = feedback_new(c->samples);
 
