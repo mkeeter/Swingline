@@ -13,14 +13,7 @@
 
 /******************************************************************************/
 
-#define GLSL_(src) "#version 330 core\n" #src
-#define GLSL(src) GLSL_(src)
-
-#define GLSL_DEFINE_RAND \
-    float rand(vec2 co)  \
-    {                    \
-        return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);  \
-    }
+#define GLSL(src) "#version 330 core\n" #src
 
 const char* voronoi_vert_src = GLSL(
     layout(location=0) in vec3 pos;     /*  Absolute coordinates  */
@@ -70,14 +63,15 @@ const char* blit_frag_src = GLSL(
 
     uniform sampler2D tex;
 
-    GLSL_DEFINE_RAND
+    float rand(float a, float b)
+    {
+        return fract(sin(a*12.9898 + b*78.233) * 43758.5453);
+    }
 
     void main()
     {
         vec4 t = texture(tex, pos_);
-        vec3 rgb = vec3(rand(vec2(t.x, t.y)),
-                        rand(vec2(t.y, t.x)),
-                        rand(vec2(t.x - t.y, t.x)));
+        vec3 rgb = vec3(rand(t.x, t.y), rand(t.y, t.x), rand(t.x - t.y, t.x));
         color = vec4(0.9f + 0.1f*rgb, 1.0f);
     }
 );
@@ -104,7 +98,9 @@ const char* sum_frag_src = GLSL(
             int i = int(255.0f * (t.r + (t.g * 256.0f) + (t.b * 65536.0f)));
             if (i == my_index)
             {
-                float weight = 1 - texelFetch(img, coord, 0)[0];
+                float weight = 1.0f - texelFetch(img, coord, 0)[0];
+                weight = 0.01f + 0.99f * weight;
+
                 color.xy += (coord + 0.5f) * weight;
                 color.w += weight;
                 color.z += 1.0f;
@@ -122,6 +118,7 @@ const char* feedback_src = GLSL(
     out vec3 pos;
 
     uniform sampler2D summed;
+
     void main()
     {
         ivec2 tex_size = textureSize(summed, 0);
@@ -135,10 +132,7 @@ const char* feedback_src = GLSL(
             weight += t.w;
             count += t.z;
         }
-        if (weight != 0)
-        {
-            pos.xy /= weight;
-        }
+        pos.xy /= weight;
         pos.z = weight / count;
     }
 );
@@ -161,7 +155,7 @@ void check_shader(GLuint shader)
     }
 }
 
-GLuint build_shader(GLenum type, const GLchar* src)
+GLuint shader_compile(GLenum type, const GLchar* src)
 {
     assert(type == GL_VERTEX_SHADER || type == GL_FRAGMENT_SHADER);
 
@@ -173,7 +167,7 @@ GLuint build_shader(GLenum type, const GLchar* src)
     return shader;
 }
 
-void check_program(GLuint program)
+void program_check(GLuint program)
 {
     GLint status;
     glGetProgramiv(program, GL_LINK_STATUS, &status);
@@ -189,14 +183,14 @@ void check_program(GLuint program)
     }
 }
 
-GLuint build_program(GLuint vert, GLuint frag)
+GLuint program_link(GLuint vert, GLuint frag)
 {
     GLuint program = glCreateProgram();
     glAttachShader(program, vert);
     glAttachShader(program, frag);
     glLinkProgram(program);
 
-    check_program(program);
+    program_check(program);
     return program;
 }
 
@@ -220,7 +214,7 @@ void teardown(GLint* viewport)
  *  Must be called with a bound VAO; binds the cone into vertex attribute
  *  slot 0
  */
-void build_cone(size_t n)
+void voronoi_cone_bind(uint16_t n)
 {
     GLuint vbo;
     size_t bytes = (n + 2) * 3 * sizeof(float);
@@ -231,7 +225,7 @@ void build_cone(size_t n)
     buf[1] = 0;
     buf[2] = -1;
 
-    for (size_t i=0; i <= n; ++i)
+    for (uint16_t i=0; i <= n; ++i)
     {
         float angle = 2 * M_PI * i / n;
         buf[i*3 + 3] = cos(angle);
@@ -252,14 +246,14 @@ void build_cone(size_t n)
  *  Builds and returns the VBO for cone instances, binding it to vertex
  *  attribute slot 1
  */
-GLuint build_instances(size_t n)
+GLuint voronoi_instances(uint16_t n)
 {
     GLuint vbo;
     size_t bytes = n * 3 * sizeof(float);
     float* buf = (float*)malloc(bytes);
 
     /*  Fill the buffer with random numbers between -1 and 1 */
-    for (size_t i=0; i < n; ++i)
+    for (uint16_t i=0; i < n; ++i)
     {
         buf[3*i]     = (float)rand() / RAND_MAX;
         buf[3*i + 1] = (float)rand() / RAND_MAX;
@@ -283,7 +277,7 @@ GLuint build_instances(size_t n)
 /*
  *  Builds a quad covering the viewport, returning the relevant VAO
  */
-GLuint build_quad()
+GLuint quad_new()
 {
     GLfloat verts[] = {-1.0f, -1.0f,     1.0f, -1.0f,
                         1.0f,  1.0f,    -1.0f,  1.0f};
@@ -308,7 +302,7 @@ GLuint build_quad()
  *  Creates an OpenGL context (3.3 or higher)
  *  Returns a window pointer; the context is made current
  */
-GLFWwindow* make_context(size_t width, size_t height)
+GLFWwindow* make_context(uint16_t width, uint16_t height)
 {
     if (!glfwInit())
     {
@@ -333,12 +327,12 @@ GLFWwindow* make_context(size_t width, size_t height)
     glfwMakeContextCurrent(window);
     {   /* Check that the OpenGL version is new enough */
         const GLubyte* ver = glGetString(GL_VERSION);
-        const size_t major = ver[0] - '0';
-        const size_t minor = ver[2] - '0';
+        const uint8_t major = ver[0] - '0';
+        const uint8_t minor = ver[2] - '0';
         if (major * 10 + minor < 33)
         {
             fprintf(stderr, "Error: OpenGL context is too old"
-                            " (require 3.3, got %lu.%lu)\n", major, minor);
+                            " (require 3.3, got %u.%u)\n", major, minor);
             exit(-1);
         }
     }
@@ -347,7 +341,7 @@ GLFWwindow* make_context(size_t width, size_t height)
 
 /******************************************************************************/
 
-GLuint new_texture()
+GLuint texture_new()
 {
     GLuint tex;
     glGenTextures(1, &tex);
@@ -363,7 +357,7 @@ GLuint new_texture()
 
 /******************************************************************************/
 
-void check_fbo(const char* description)
+void fbo_check(const char* description)
 {   /*  Check to see if the framebuffer is complete  */
     int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE)
@@ -379,36 +373,26 @@ void check_fbo(const char* description)
 typedef struct Config_ {
     stbi_uc* img;           /*  Pointer to raw image data  */
 
-    size_t width, height;   /*  Image size   */
-    size_t samples;         /*  Number of Voronoi cells */
-    size_t resolution;      /*  Resolution of Voronoi cones  */
+    uint16_t width, height; /*  Image size   */
+    uint16_t samples;       /*  Number of Voronoi cells */
+    uint16_t resolution;    /*  Resolution of Voronoi cones  */
 
     float sx, sy;           /*  Scale (used to adjust for aspect ratio) */
+    float radius;           /*  Stipple radius (in arbitrary units)     */
 } Config;
 
-Config* config_new(stbi_uc* img, size_t width, size_t height,
-                   size_t samples, size_t resolution)
+void config_set_aspect_ratio(Config* c)
 {
-    Config* c = (Config*)calloc(1, sizeof(Config));
-
-    (*c) = (Config){
-        .img = img,
-        .width = width,
-        .height = height,
-        .samples = samples,
-        .resolution = resolution};
-
-    if (width > height)
+    if (c->width > c->height)
     {
         c->sx = 1;
-        c->sy = (float)width / (float)height;
+        c->sy = (float)c->width / (float)c->height;
     }
     else
     {
-        c->sx = (float)height / (float)width;
+        c->sx = (float)c->height / (float)c->width;
         c->sy = 1;
     }
-    return c;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -430,17 +414,17 @@ Voronoi* voronoi_new(const Config* cfg, uint8_t* img)
     glGenVertexArrays(1, &v->vao);
 
     glBindVertexArray(v->vao);
-        build_cone(cfg->resolution);           /* Uses bound VAO   */
-        v->pts = build_instances(cfg->samples);   /* (same) */
+        voronoi_cone_bind(cfg->resolution);         /* Uses bound VAO   */
+        v->pts = voronoi_instances(cfg->samples);   /* (same) */
     glBindVertexArray(0);
 
-    v->prog = build_program(
-        build_shader(GL_VERTEX_SHADER, voronoi_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, voronoi_frag_src));
+    v->prog = program_link(
+        shader_compile(GL_VERTEX_SHADER, voronoi_vert_src),
+        shader_compile(GL_FRAGMENT_SHADER, voronoi_frag_src));
 
-    v->tex   = new_texture();
-    v->depth = new_texture();
-    v->img   = new_texture();
+    v->tex   = texture_new();
+    v->depth = texture_new();
+    v->img   = texture_new();
 
     glBindTexture(GL_TEXTURE_2D, v->tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, cfg->width, cfg->height,
@@ -458,12 +442,11 @@ Voronoi* voronoi_new(const Config* cfg, uint8_t* img)
                            GL_TEXTURE_2D, v->tex, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
                            GL_TEXTURE_2D, v->depth, 0);
-    check_fbo("voronoi");
+    fbo_check("voronoi");
 
     teardown(NULL);
     return v;
 }
-
 
 void voronoi_draw(Config* cfg, Voronoi* v)
 {
@@ -497,8 +480,8 @@ typedef struct Sum_
 Sum* sum_new(Config* config)
 {
     Sum* sum = (Sum*)calloc(1, sizeof(Sum));
-    sum->vao = build_quad();
-    sum->tex = new_texture();
+    sum->vao = quad_new();
+    sum->tex = texture_new();
     glBindTexture(GL_TEXTURE_2D, sum->tex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, config->samples, config->height,
                      0, GL_RGB, GL_FLOAT, 0);
@@ -507,11 +490,11 @@ Sum* sum_new(Config* config)
     glBindFramebuffer(GL_FRAMEBUFFER, sum->fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, sum->tex, 0);
-    check_fbo("sum");
+    fbo_check("sum");
 
-    sum->prog = build_program(
-        build_shader(GL_VERTEX_SHADER, quad_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, sum_frag_src));
+    sum->prog = program_link(
+        shader_compile(GL_VERTEX_SHADER, quad_vert_src),
+        shader_compile(GL_FRAGMENT_SHADER, sum_frag_src));
 
     teardown(NULL);
     return sum;
@@ -551,14 +534,14 @@ typedef struct Feedback_
     GLuint prog;
 } Feedback;
 
-GLuint feedback_indices(size_t samples)
+GLuint feedback_indices(uint16_t samples)
 {
     GLuint vao;
     GLuint vbo;
     size_t bytes = sizeof(GLuint) * samples;
     GLuint* indices = (GLuint*)malloc(bytes);
 
-    for (size_t i=0; i < samples; ++i)
+    for (uint16_t i=0; i < samples; ++i)
     {
         indices[i] = i;
     }
@@ -583,12 +566,12 @@ Feedback* feedback_new(GLuint samples)
     Feedback* f = (Feedback*)calloc(1, sizeof(Feedback));
 
     f->prog = glCreateProgram();
-    GLuint shader = build_shader(GL_VERTEX_SHADER, feedback_src);
+    GLuint shader = shader_compile(GL_VERTEX_SHADER, feedback_src);
     glAttachShader(f->prog, shader);
     const GLchar* varying[] = { "pos" };
     glTransformFeedbackVaryings(f->prog, 1, varying, GL_INTERLEAVED_ATTRIBS);
     glLinkProgram(f->prog);
-    check_program(f->prog);
+    program_check(f->prog);
 
     f->vao = feedback_indices(samples);
 
@@ -625,8 +608,7 @@ const char* stipples_vert_src = GLSL(
 
     void main()
     {
-        float r = 0.2f + 0.8f * offset.z;
-        vec2 scaled = vec2(pos.x * radius.x, pos.y * radius.y) * r;
+        vec2 scaled = vec2(pos.x * radius.x, pos.y * radius.y) * sqrt(offset.z);
         gl_Position = vec4(scaled + 2.0f*offset.xy - 1.0f, 0.0f, 1.0f);
     }
 );
@@ -682,9 +664,9 @@ Stipples* stipples_new(Config* cfg, Voronoi* v)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
     glVertexAttribDivisor(1, 1);
 
-    s->prog = build_program(
-        build_shader(GL_VERTEX_SHADER, stipples_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, stipples_frag_src));
+    s->prog = program_link(
+        shader_compile(GL_VERTEX_SHADER, stipples_vert_src),
+        shader_compile(GL_FRAGMENT_SHADER, stipples_frag_src));
 
     teardown(NULL);
     return s;
@@ -695,7 +677,7 @@ void stipples_draw(Config* cfg, Stipples* s)
     glUseProgram(s->prog);
 
     glUniform2f(glGetUniformLocation(s->prog, "radius"),
-                0.01 * cfg->sx, 0.01 * cfg->sy);
+                cfg->radius * cfg->sx, cfg->radius * cfg->sy);
     glBindVertexArray(s->vao);
     glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, cfg->resolution+2, cfg->samples);
 
@@ -706,21 +688,25 @@ void stipples_draw(Config* cfg, Stipples* s)
 
 void print_usage(char* prog)
 {
-    fprintf(stderr, "Usage: %s [-n samples] file\n", prog);
+    fprintf(stderr, "Usage: %s [-n samples] [-r radius] image\n", prog);
 }
 
 Config* parse_args(int argc, char** argv)
 {
-    int n = 1000;
+    unsigned n = 1000;
+    float r = 0.01f;
     while (true)
     {
-        char c = getopt(argc, argv, "n:");
+        char c = getopt(argc, argv, "r:n:");
         if (c == -1) {  break; }
 
         switch (c)
         {
             case 'n':
                 n = atoi(optarg);
+                break;
+            case 'r':
+                r = 0.01f * atof(optarg);
                 break;
             default:
                 print_usage(argv[0]);
@@ -734,6 +720,11 @@ Config* parse_args(int argc, char** argv)
         print_usage(argv[0]);
         exit(EXIT_FAILURE);
     }
+    else if (n > UINT16_MAX)
+    {
+        fprintf(stderr, "Error: too many points (%i)\n", n);
+        exit(-1);
+    }
 
     int x, y;
     stbi_set_flip_vertically_on_load(true);
@@ -744,8 +735,23 @@ Config* parse_args(int argc, char** argv)
         fprintf(stderr, "Error loading image: %s\n", stbi_failure_reason());
         exit(-1);
     }
+    else if ((unsigned)x > UINT16_MAX || (unsigned)y > UINT16_MAX)
+    {
+        fprintf(stderr, "Error: image is too large (%i x %i)\n", x, y);
+        exit(-1);
+    }
 
-    return config_new(img, x, y, n, 256);
+    Config* c = (Config*)calloc(1, sizeof(Config));
+    (*c) = (Config){
+        .img = img,
+        .width = (uint16_t)x,
+        .height = (uint16_t)y,
+        .samples = (uint16_t)n,
+        .resolution = 256,
+        .radius = r};
+
+    config_set_aspect_ratio(c);
+    return c;
 }
 
 int main(int argc, char** argv)
@@ -759,10 +765,10 @@ int main(int argc, char** argv)
     Feedback* f = feedback_new(c->samples);
 
     /*  These are used for rendering to the screen  */
-    GLuint quad_vao = build_quad();
-    GLuint blit_program = build_program(
-        build_shader(GL_VERTEX_SHADER, quad_vert_src),
-        build_shader(GL_FRAGMENT_SHADER, blit_frag_src));
+    GLuint quad_vao = quad_new();
+    GLuint blit_program = program_link(
+        shader_compile(GL_VERTEX_SHADER, quad_vert_src),
+        shader_compile(GL_FRAGMENT_SHADER, blit_frag_src));
     Stipples* stipples = stipples_new(c, v);
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -770,7 +776,7 @@ int main(int argc, char** argv)
 
     while (!glfwWindowShouldClose(win))
     {
-        /*  Render the current voronoi diagram's state  */
+        /*  Render the current voronoi diagram's state to v->tex */
         voronoi_draw(c, v);
 
         /*  Calculate the centroids and write them to v->pts  */
