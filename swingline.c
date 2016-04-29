@@ -209,69 +209,6 @@ void teardown(GLint* viewport)
 
 /******************************************************************************/
 
-/*
- *  Builds a vertex buffer to draw a single cone
- *  Must be called with a bound VAO; binds the cone into vertex attribute
- *  slot 0
- */
-void voronoi_cone_bind(uint16_t n)
-{
-    GLuint vbo;
-    size_t bytes = (n + 2) * 3 * sizeof(float);
-    float* buf = (float*)malloc(bytes);
-
-    /* This is the tip of the cone */
-    buf[0] = 0;
-    buf[1] = 0;
-    buf[2] = -1;
-
-    for (uint16_t i=0; i <= n; ++i)
-    {
-        float angle = 2 * M_PI * i / n;
-        buf[i*3 + 3] = cos(angle);
-        buf[i*3 + 4] = sin(angle);
-        buf[i*3 + 5] = 1;
-    }
-
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-
-    free(buf);
-}
-
-/*
- *  Builds and returns the VBO for cone instances, binding it to vertex
- *  attribute slot 1
- */
-GLuint voronoi_instances(uint16_t n)
-{
-    GLuint vbo;
-    size_t bytes = n * 3 * sizeof(float);
-    float* buf = (float*)malloc(bytes);
-
-    /*  Fill the buffer with random numbers between -1 and 1 */
-    for (uint16_t i=0; i < n; ++i)
-    {
-        buf[3*i]     = (float)rand() / RAND_MAX;
-        buf[3*i + 1] = (float)rand() / RAND_MAX;
-        buf[3*i + 2] = 0.0f;
-    }
-
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_DYNAMIC_DRAW);
-
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 3*sizeof(float), 0);
-    glVertexAttribDivisor(1, 1);
-
-    free(buf);
-    return vbo;
-}
-
 /******************************************************************************/
 
 /*
@@ -408,6 +345,79 @@ typedef struct Voronoi_ {
     GLuint fbo;     /*  Framebuffer for render-to-texture   */
 } Voronoi;
 
+/*
+ *  Builds a vertex buffer to draw a single cone
+ *  Must be called with a bound VAO; binds the cone into vertex attribute
+ *  slot 0
+ */
+void voronoi_cone_bind(uint16_t n)
+{
+    GLuint vbo;
+    size_t bytes = (n + 2) * 3 * sizeof(float);
+    float* buf = (float*)malloc(bytes);
+
+    /* This is the tip of the cone */
+    buf[0] = 0;
+    buf[1] = 0;
+    buf[2] = -1;
+
+    for (uint16_t i=0; i <= n; ++i)
+    {
+        float angle = 2 * M_PI * i / n;
+        buf[i*3 + 3] = cos(angle);
+        buf[i*3 + 4] = sin(angle);
+        buf[i*3 + 5] = 1;
+    }
+
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+    free(buf);
+}
+
+/*
+ *  Builds and returns the VBO for cone instances, binding it to vertex
+ *  attribute slot 1
+ */
+GLuint voronoi_instances(const Config* c)
+{
+    GLuint vbo;
+    size_t bytes = c->samples * 3 * sizeof(float);
+    float* buf = (float*)malloc(bytes);
+
+    /*  Fill the buffer with values between 0 and 1, using        *
+     *  rejection sampling to create a good initial distribution  */
+    uint16_t i=0;
+    while (i < c->samples)
+    {
+        int x = rand() % c->width;
+        int y = rand() % c->height;
+        uint8_t p = c->img[y*c->width + x];
+
+        if ((rand() % 256) > p)
+        {
+            buf[3*i]     = (x + 0.5f) / c->width;
+            buf[3*i + 1] = (y + 0.5f) / c->height;
+            buf[3*i + 2] = 0.0f;
+            i++;
+        }
+    }
+
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, bytes, buf, GL_DYNAMIC_DRAW);
+
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 3*sizeof(float), 0);
+    glVertexAttribDivisor(1, 1);
+
+    free(buf);
+    return vbo;
+}
+
 Voronoi* voronoi_new(const Config* cfg, uint8_t* img)
 {
     Voronoi* v = (Voronoi*)calloc(1, sizeof(Voronoi));
@@ -415,7 +425,7 @@ Voronoi* voronoi_new(const Config* cfg, uint8_t* img)
 
     glBindVertexArray(v->vao);
         voronoi_cone_bind(cfg->resolution);         /* Uses bound VAO   */
-        v->pts = voronoi_instances(cfg->samples);   /* (same) */
+        v->pts = voronoi_instances(cfg);            /* (same) */
     glBindVertexArray(0);
 
     v->prog = program_link(
