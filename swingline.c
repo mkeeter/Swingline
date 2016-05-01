@@ -239,7 +239,7 @@ GLuint quad_new()
  *  Creates an OpenGL context (3.3 or higher)
  *  Returns a window pointer; the context is made current
  */
-GLFWwindow* make_context(uint16_t width, uint16_t height)
+GLFWwindow* make_context(uint16_t width, uint16_t height, bool hide)
 {
     if (!glfwInit())
     {
@@ -251,6 +251,7 @@ GLFWwindow* make_context(uint16_t width, uint16_t height)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, !hide);
 
     GLFWwindow* const window = glfwCreateWindow(
             width, height, "swingline", NULL, NULL);
@@ -316,6 +317,9 @@ typedef struct Config_ {
 
     float sx, sy;           /*  Scale (used to adjust for aspect ratio) */
     float radius;           /*  Stipple radius (in arbitrary units)     */
+
+    int iter;               /*  Number of iterations; -1 if interactive */
+    const char* out;        /*  Output file name  */
 } Config;
 
 void config_set_aspect_ratio(Config* c)
@@ -698,22 +702,32 @@ void stipples_draw(Config* cfg, Stipples* s)
 
 void print_usage(char* prog)
 {
-    fprintf(stderr, "Usage: %s [-n samples] [-r radius] image\n", prog);
+    fprintf(stderr, "Usage: %s [-n samples] [-r radius] [-o output] "
+                              "[-i iterations] image\n", prog);
 }
 
 Config* parse_args(int argc, char** argv)
 {
     unsigned n = 1000;
     float r = 0.01f;
+    int iter = -1;
+    const char* out = NULL;
+
     while (true)
     {
-        char c = getopt(argc, argv, "r:n:");
+        char c = getopt(argc, argv, "r:n:o:i:");
         if (c == -1) {  break; }
 
         switch (c)
         {
             case 'n':
                 n = atoi(optarg);
+                break;
+            case 'i':
+                iter = atoi(optarg);
+                break;
+            case 'o':
+                out = optarg;
                 break;
             case 'r':
                 r = 0.01f * atof(optarg);
@@ -751,6 +765,16 @@ Config* parse_args(int argc, char** argv)
         exit(-1);
     }
 
+    if (out)
+    {
+        size_t len = strlen(out);
+        if (len >= 4 && strcmp(out + len - 4, ".svg"))
+        {
+            fprintf(stderr, "Error: output file should end in .svg (%s)\n", out);
+            exit(-1);
+        }
+    }
+
     Config* c = (Config*)calloc(1, sizeof(Config));
     (*c) = (Config){
         .img = img,
@@ -758,7 +782,9 @@ Config* parse_args(int argc, char** argv)
         .height = (uint16_t)y,
         .samples = (uint16_t)n,
         .resolution = 256,
-        .radius = r};
+        .radius = r,
+        .iter = iter,
+        .out = out};
 
     config_set_aspect_ratio(c);
     return c;
@@ -767,50 +793,96 @@ Config* parse_args(int argc, char** argv)
 int main(int argc, char** argv)
 {
     Config* c = parse_args(argc, argv);
-    GLFWwindow* win = make_context(c->width, c->height);
+    GLFWwindow* win = make_context(c->width, c->height, c->iter != -1);
 
     /*  These are the three stages in the stipple update loop   */
     Voronoi* v = voronoi_new(c, c->img);
     Sum* s = sum_new(c);
     Feedback* f = feedback_new(c->samples);
 
-    /*  These are used for rendering to the screen  */
-    GLuint quad_vao = quad_new();
-    GLuint blit_program = program_link(
-        shader_compile(GL_VERTEX_SHADER, quad_vert_src),
-        shader_compile(GL_FRAGMENT_SHADER, blit_frag_src));
-    Stipples* stipples = stipples_new(c, v);
-
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClearDepth(1.0f);
 
-    while (!glfwWindowShouldClose(win))
+    if (c->iter == -1)  /* Interactive mode */
     {
-        /*  Render the current voronoi diagram's state to v->tex */
-        voronoi_draw(c, v);
+        /*  These are used for rendering to the screen  */
+        GLuint quad_vao = quad_new();
+        GLuint blit_program = program_link(
+            shader_compile(GL_VERTEX_SHADER, quad_vert_src),
+            shader_compile(GL_FRAGMENT_SHADER, blit_frag_src));
+        Stipples* stipples = stipples_new(c, v);
 
-        /*  Calculate the centroids and write them to v->pts  */
-        sum_draw(c, v, s);
-        feedback_draw(c, v, s, f);
+        while (!glfwWindowShouldClose(win))
+        {
+            /*  Render the current voronoi diagram's state to v->tex */
+            voronoi_draw(c, v);
 
-        /*  Then draw the quad   */
-        glBindVertexArray(quad_vao);
-        glUseProgram(blit_program);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, v->tex);
-        glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
+            /*  Calculate the centroids and write them to v->pts  */
+            sum_draw(c, v, s);
+            feedback_draw(c, v, s, f);
 
-        glDisable(GL_DEPTH_TEST);
-        glClear(GL_COLOR_BUFFER_BIT);
+            /*  Then draw the quad   */
+            glBindVertexArray(quad_vao);
+            glUseProgram(blit_program);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, v->tex);
+            glUniform1i(glGetUniformLocation(blit_program, "tex"), 0);
 
-        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+            glDisable(GL_DEPTH_TEST);
+            glClear(GL_COLOR_BUFFER_BIT);
 
-        /*  Render cell centroids as white dots  */
-        stipples_draw(c, stipples);
+            glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
-        /*  Draw and poll   */
-        glfwSwapBuffers(win);
-        glfwPollEvents();
+            /*  Render cell centroids as white dots  */
+            stipples_draw(c, stipples);
+
+            /*  Draw and poll   */
+            glfwSwapBuffers(win);
+            glfwPollEvents();
+        }
+    }
+    else    /* Non-interactive mode */
+    {
+        for (int i=0; i < c->iter; ++i)
+        {
+            voronoi_draw(c, v);
+            sum_draw(c, v, s);
+            feedback_draw(c, v, s, f);
+        }
+    }
+
+    if (c->out)
+    {
+        FILE* f = fopen(c->out, "w");
+        if (!f)
+        {
+            perror("File opening failed");
+            return EXIT_FAILURE;
+        }
+
+        fprintf(f,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n"
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\"\n"
+            "    viewBox=\"0 0 %u %u\" width=\"%u\" height=\"%u\" id=\"swingline\">\n",
+            c->width, c->height, c->width, c->height);
+
+        glBindBuffer(GL_ARRAY_BUFFER, v->pts);
+        size_t bytes = 3 * sizeof(float) * c->samples;
+        float (*pts)[3] = (float (*)[3])malloc(3 * sizeof(bytes) * c->samples);
+        glGetBufferSubData(GL_ARRAY_BUFFER, 0, bytes, pts);
+
+        for (int i=0; i < c->samples; ++i)
+        {
+            fprintf(f,
+                "    <circle cx=\"%f\" cy=\"%f\" r=\"%f\" fill=\"black\" />\n",
+                c->width*pts[i][0], c->height - c->height*pts[i][1],
+                c->radius * fmin(c->sx, c->sy) * fmin(c->width, c->height) *
+                    pts[i][2]);
+        }
+
+        free(pts);
+        fprintf(f, "</svg>");
+        fclose(f);
     }
 
     return 0;
