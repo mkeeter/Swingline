@@ -845,10 +845,13 @@ int main(int argc, char** argv)
     {
         for (int i=0; i < c->iter; ++i)
         {
+            printf("\r%s: %i / %i", argv[0], i + 1, c->iter);
+            fflush(stdout);
             voronoi_draw(c, v);
             sum_draw(c, v, s);
             feedback_draw(c, v, s, f);
         }
+        printf("\n");
     }
 
     if (c->out)
