@@ -458,6 +458,7 @@ Voronoi* voronoi_new(const Config* cfg, uint8_t* img)
     v->depth = texture_new();
     v->img   = texture_new();
 
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glBindTexture(GL_TEXTURE_2D, v->tex);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, cfg->width, cfg->height,
                  0, GL_RGB, GL_UNSIGNED_BYTE, 0);
