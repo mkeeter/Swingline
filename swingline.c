@@ -21,7 +21,6 @@
 #include <math.h>
 #include <unistd.h>
 
-#include <png.h>
 #include <epoxy/gl.h>
 #include <GLFW/glfw3.h>
 
